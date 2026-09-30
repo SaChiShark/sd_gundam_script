@@ -1,0 +1,22 @@
+# SD Gundam Script Configuration
+device:
+  host: 127.0.0.1
+  port: 5555
+  serial: emulator-5554
+  adb_path: 'C:\Program Files\BlueStacks_nxt\HD-Adb.exe'
+  screencap_timeout: 5.0
+
+vision:
+  default_threshold: 0.82
+  debug_save: true
+
+game:
+  package_name: com.bandainamcoent.gget_WW
+  activity_name: null
+
+tasks:
+  enabled_tasks:
+    - daily_login
+    - mailbox
+    - free_gacha
+  max_retries_per_task: 3

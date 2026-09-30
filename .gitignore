@@ -60,6 +60,7 @@ coverage.xml
 # Project temporary dumps & logs
 logs/
 *.log
+captures/*.png
 captures/temp/
 debug/
 scratch/
