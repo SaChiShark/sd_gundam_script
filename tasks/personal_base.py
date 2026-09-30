@@ -2,6 +2,8 @@
 import time
 from typing import List, Optional, Tuple
 
+import cv2
+import numpy as np
 from loguru import logger
 
 from core.device import Device
@@ -121,10 +123,42 @@ class PersonalBaseRequestTask(BaseTask):
             self.device.random_sleep(1.5, 2.0)
             return
 
-        # 2. Check for completed / claimable reward
-        # In detail view, action button is at x: 1450 to 1850, y: 730 to 860 (center: 1645, 790)
-        # Dismiss any popup if present
+        # 2. Check for '報告' (Report & Claim Completed Request)
+        report_match = self.vision.match_template(frame, "assets/buttons/btn_report_orange.png", threshold=0.80)
+        if report_match or self._is_orange_action_button(frame):
+            logger.info("Found '報告' button! Tapping to claim completed request...")
+            if report_match:
+                self.device.tap_rect(report_match.rect)
+            else:
+                self.device.tap(1623, 858)
+            self.device.random_sleep(2.5, 3.0)
+
+            # Skip completion dialogue
+            logger.info("Skipping completion dialogue...")
+            self.device.tap(1760, 60)
+            self.device.random_sleep(2.0, 2.5)
+
+            # Dismiss '回報完成' screen
+            logger.info("Dismissing '回報完成' screen...")
+            self.device.tap(960, 500)
+            self.device.random_sleep(2.0, 2.5)
+
+            # Dismiss '領取結果' (OK button)
+            logger.info("Dismissing '領取結果' modal...")
+            self.device.tap(962, 949)
+            self.device.random_sleep(1.5, 2.0)
+            return
+
+        # 3. Dismiss any unexpected popup if present
         self._dismiss_any_popup()
+
+    def _is_orange_action_button(self, frame) -> bool:
+        """Check if an orange action button is present in the lower right."""
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        orange_mask = cv2.inRange(hsv, (5, 120, 150), (25, 255, 255))
+        # Lower right region
+        lr = orange_mask[750:900, 1400:1850]
+        return np.sum(lr > 0) > 1000
 
     def _process_all_slots(self) -> None:
         """Iterate over the 3 daily character slots."""
