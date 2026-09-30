@@ -28,13 +28,14 @@ class HomeAnchorROI:
     Standard Regions of Interest (ROI) for Home screen recognition (1920x1080 baseline).
     
     Verified Core Anchors:
-    1. TOP_LEFT_LEVEL: 玩家等級圖示與數值 (x: 0, y: 0, w: 400, h: 160)
-    2. TOP_RIGHT_STAMINA: 體力/AP條與貨幣欄 (x: 1200, y: 0, w: 720, h: 160)
-    3. BOTTOM_RIGHT_SORTIE: 右下角核心「出擊」按鈕 (x: 1450, y: 850, w: 470, h: 230)
+    1. TOP_LEFT_LEVEL: 玩家等級圖示 (x: 0, y: 0, w: 300, h: 150)
+    2. TOP_RIGHT_STAMINA: 體力/AP膠囊圖示 (x: 1100, y: 0, w: 300, h: 150)
+    3. BOTTOM_RIGHT_SORTIE: 右下角核心「出擊」按鈕 (x: 1250, y: 580, w: 670, h: 350)
     """
-    TOP_LEFT_LEVEL: Tuple[int, int, int, int] = (0, 0, 400, 160)
-    TOP_RIGHT_STAMINA: Tuple[int, int, int, int] = (1200, 0, 720, 160)
-    BOTTOM_RIGHT_SORTIE: Tuple[int, int, int, int] = (1450, 850, 470, 230)
+    TOP_LEFT_LEVEL: Tuple[int, int, int, int] = (0, 0, 300, 150)
+    TOP_RIGHT_STAMINA: Tuple[int, int, int, int] = (1100, 0, 300, 150)
+    BOTTOM_RIGHT_SORTIE: Tuple[int, int, int, int] = (1250, 580, 670, 350)
+
 
 
 class StateMachine:
