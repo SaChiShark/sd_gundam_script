@@ -10,13 +10,20 @@ from core.device import Device
 from core.state_machine import StateMachine
 from core.vision import Vision
 from tasks.base import BaseTask
+from tasks.daily_login import DailyLoginTask
 from tasks.personal_base import PersonalBaseRequestTask
+from tasks.daily_cultivation import DailyCultivationTask
 
 
 REGISTERED_TASKS: Dict[str, Type[BaseTask]] = {
+    "daily_login": DailyLoginTask,
     "personal_base": PersonalBaseRequestTask,
     "base": PersonalBaseRequestTask,
+    "daily_cultivation": DailyCultivationTask,
+    "cultivation": DailyCultivationTask,
+    "upgrade": DailyCultivationTask,
 }
+
 
 
 def setup_logger(log_level: str = "INFO") -> None:

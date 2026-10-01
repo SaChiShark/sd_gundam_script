@@ -42,7 +42,7 @@ class BaseTask(ABC):
         """Verify postconditions (e.g. return to Home screen)."""
         logger.info(f"[{self.name}] Running post-check: Returning to Home screen...")
         # Tap bottom-left Home tab or back key until Home is reached
-        self.device.tap(100, 990)
+        self.device.tap(150, 1035)
         self.device.random_sleep(1.5, 2.5)
 
         frame = self.device.screencap()
