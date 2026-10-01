@@ -13,6 +13,7 @@ from tasks.base import BaseTask
 from tasks.daily_login import DailyLoginTask
 from tasks.personal_base import PersonalBaseRequestTask
 from tasks.daily_cultivation import DailyCultivationTask
+from tasks.warship_cruise import WarshipCruiseTask
 
 
 REGISTERED_TASKS: Dict[str, Type[BaseTask]] = {
@@ -22,6 +23,9 @@ REGISTERED_TASKS: Dict[str, Type[BaseTask]] = {
     "daily_cultivation": DailyCultivationTask,
     "cultivation": DailyCultivationTask,
     "upgrade": DailyCultivationTask,
+    "warship_cruise": WarshipCruiseTask,
+    "warship": WarshipCruiseTask,
+    "cruise": WarshipCruiseTask,
 }
 
 
