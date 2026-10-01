@@ -38,12 +38,16 @@ class HomeAnchorROI:
 
 
 
+from core.page_manager import PageManager, PageType
+
+
 class StateMachine:
     """Tracks game UI state and orchestrates autonomous navigation."""
 
     def __init__(self, device: Device, vision: Optional[Vision] = None):
         self.device = device
         self.vision = vision or Vision()
+        self.page_manager = PageManager(self.device, self.vision)
         self.current_state = GameState.UNKNOWN
 
     def _crop_roi(self, frame: np.ndarray, roi: Tuple[int, int, int, int]) -> np.ndarray:
@@ -57,9 +61,6 @@ class StateMachine:
         - 畫面右下角: 出擊按鈕 (assets/anchors/home_sortie.png)
         - 畫面左上角: 玩家等級 (assets/anchors/home_level.png)
         - 畫面右上角: 體力條 (assets/anchors/home_stamina.png)
-
-        Supports weighted multi-anchor voting. If at least 2 anchors or the primary Sortie button
-        match with high confidence, Home state is confirmed.
         """
         anchor_hits = 0
         total_checked = 0
@@ -68,7 +69,7 @@ class StateMachine:
         try:
             sortie_roi = self._crop_roi(frame, HomeAnchorROI.BOTTOM_RIGHT_SORTIE)
             if self.vision.match_template(sortie_roi, "assets/anchors/home_sortie.png", threshold=0.80):
-                anchor_hits += 2  # High weight
+                anchor_hits += 2
             total_checked += 1
         except FileNotFoundError:
             pass
@@ -99,13 +100,12 @@ class StateMachine:
 
     def navigate_to_home(self, timeout: float = 90.0) -> bool:
         """
-        Autonomous startup pipeline:
-        Repeatedly intercepts popups, checks 'Don't show today', closes banners,
-        and taps title screen until the Home screen anchors are fully converged.
+        Standardized startup and recovery pipeline:
+        Delegates all popups, date-resets, login bonuses, and unexpected screens
+        to the centralized PageManager until Home screen is verified.
         """
-        logger.info(f"Navigating to Home screen (timeout={timeout}s)...")
+        logger.info(f"Navigating to Home screen via PageManager (timeout={timeout}s)...")
         start_time = time.time()
-        last_action_time = time.time()
 
         while time.time() - start_time < timeout:
             frame = self.device.screencap()
@@ -116,62 +116,18 @@ class StateMachine:
                 self.current_state = GameState.HOME
                 return True
 
-            action_taken = False
+            # 2. Delegate to PageManager for standardized classification and resolution
+            page_type, success = self.page_manager.resolve_page(frame, max_attempts=1)
 
-            # 2. Check for Title Screen (TAP TO START / 資料同步)
-            try:
-                if self.vision.match_template(frame, "assets/anchors/title_tap_to_start.png", threshold=0.75) or \
-                   self.vision.match_template(frame, "assets/anchors/title_data_sync.png", threshold=0.75):
-                    logger.info("Detected Title Screen. Tapping center to start...")
-                    self.device.tap(960, 750, radius=20)
-                    action_taken = True
-                    last_action_time = time.time()
-                    self.device.random_sleep(2.0, 3.0)
-                    continue
-            except FileNotFoundError:
-                pass
+            if page_type == PageType.HOME:
+                self.current_state = GameState.HOME
+                return True
 
-            # 3. Check for Close buttons (btn_close_gray.png, btn_close_blue.png)
-            try:
-                for close_tmpl in ["assets/buttons/btn_close_gray.png", "assets/buttons/btn_close_blue.png"]:
-                    if btn_close := self.vision.match_template(frame, close_tmpl, threshold=0.80):
-                        logger.info(f"Detected popup close button ({close_tmpl}). Tapping...")
-                        self.device.tap_rect(btn_close.rect)
-                        action_taken = True
-                        last_action_time = time.time()
-                        break
-            except FileNotFoundError:
-                pass
+            if page_type == PageType.UNKNOWN:
+                logger.warning("[StateMachine] 遇到未辨識頁面，已觸發安全防護並暫停。請向使用者請教。")
+                return False
 
-            # 4. Check for Confirmation / OK buttons (btn_modal_ok.png)
-            try:
-                if not action_taken:
-                    if btn_ok := self.vision.match_template(frame, "assets/buttons/btn_modal_ok.png", threshold=0.80):
-                        logger.info("Detected OK/confirm button. Tapping...")
-                        self.device.tap_rect(btn_ok.rect)
-                        action_taken = True
-                        last_action_time = time.time()
-            except FileNotFoundError:
-                pass
-
-            # 5. Check for "Don't show today" checkbox if template exists
-            try:
-                if not action_taken:
-                    if cb := self.vision.match_template(frame, "assets/buttons/checkbox_unchecked.png", threshold=0.85):
-                        logger.info("Found 'Don't show today' checkbox. Tapping to check...")
-                        self.device.tap_rect(cb.rect)
-                        action_taken = True
-                        last_action_time = time.time()
-            except FileNotFoundError:
-                pass
-
-            # 6. Fallback Interception: If no known buttons matched and state has been static for > 4s
-            if not action_taken and (time.time() - last_action_time > 4.0):
-                logger.debug("No active UI matched for 4s. Sending KEYCODE_BACK to dismiss potential modal...")
-                self.device.key_back()
-                last_action_time = time.time()
-
-            self.device.random_sleep(0.8, 1.5)
+            self.device.random_sleep(1.0, 1.8)
 
         logger.error(f"Navigation timed out after {timeout}s without reaching Home screen.")
         return False
