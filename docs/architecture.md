@@ -96,7 +96,15 @@ flowchart TD
 
 - **超時自癒 (Auto-Recovery)**：若特定狀態停留超過 30 秒，自動觸發 Android 實體返回鍵嘗試回到上一層，直至重新鎖定主頁錨點。
 
-### 3.4 任務層 (`tasks/`)
+### 3.4 標準化頁面管理與例外處理 (`core/page_manager.py`)
+- **頁面標準分類器 (`classify()`)**：
+  - 透過 OCR 關鍵字與特徵錨點將當前畫面統一分類（如 `HOME`、`DATE_RESET`、`LOGIN_BONUS`、`MODAL_INFO`、`MODAL_CONFIRM`、`COMM_ERROR`、`TITLE_SCREEN`、`ITEM_ACQUIRED`）。
+  - 各畫面具備獨立標準 Handler（如 `handle_date_reset`, `handle_login_bonus`, `handle_modal_info` 等），拒絕各任務私下自行盲猜處理。
+- **未知頁面安全防護 (Unknown Page Guardrail)**：
+  - 偵測到未定義或異常頁面（`UNKNOWN`）時，自動儲存截圖至 `captures/unknown_pages/` 並寫入 `unknown_pages_log.json`。
+  - 發出終端警報並主動提示向使用者請教處理方針，落實 Human-in-the-loop 安全防護。
+
+### 3.5 任務層 (`tasks/`)
 - 統一介面 `BaseTask`：
   - `run() -> bool`：任務主執行邏輯。
   - `pre_check() -> bool`：任務前置檢查（如體力是否充足、次數是否已歸零）。
