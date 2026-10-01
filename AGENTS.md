@@ -10,6 +10,9 @@
    - 執行期間必須即時輸出當前操作細節（UI 狀態、點擊座標、OCR 辨識結果、等待狀態），絕不在背景靜默操作。
 4. **未辨識任務安全防護 (Unknown Task Safety Guardrail)**
    - 偵測到未知或未支援任務時：自動截圖存至 `captures/unknown_tasks/`、記錄 Log、發出終端警報並安全返回，絕不盲點。
+5. **標準化頁面處理與例外求助 (Standardized Page Management & Exception Handling)**
+   - 頁面判斷必須透過標準化分類器與專屬 Handler 處理，**嚴禁各任務各自私下獨立處理**。
+   - 狀態機遇到例外或不確定畫面時：自動截圖存至 `captures/unknown_pages/`、記錄 Log，並**主動停下來向使用者請教處理方式**，絕不擅自盲試。
 
 ---
 
@@ -18,6 +21,7 @@
 - **非侵入黑盒 (Black-box Only)**：僅使用 ADB 截圖與模擬點擊，不碰記憶體或封包。
 - **擬真與防封 (Anti-Detection)**：點擊必須包含隨機座標偏移，等待時間隨機化，滑動使用曲線軌跡。
 - **狀態驅動控制 (State-Driven)**：禁止固定秒數盲睡，所有跳轉必須以 UI 錨點或 OCR 驗證；若卡死超過 30 秒自動退回主畫面。
+- **統一頁面管理 (PageManager)**：彈窗、換日、簽到與例外狀態統一由 `core/page_manager.py` 處理，拒絕獨立各搞一套。
 - **模組化架構**：任務皆繼承 `BaseTask`，彼此獨立解耦。
 
 ---
