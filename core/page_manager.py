@@ -26,6 +26,8 @@ class PageType(Enum):
     COMM_ERROR = "comm_error"                 # 網路/通訊錯誤 (帶「重試」按鈕)
     TITLE_SCREEN = "title_screen"             # 遊戲啟動標題頁面 (帶「TOUCH TO START」)
     ITEM_ACQUIRED = "item_acquired"           # 結算/獲得道具視窗 (帶「OK」按鈕)
+    PERSONAL_BASE = "personal_base"           # 個人基地主畫面
+    CHARACTER_REQUESTS = "character_requests" # 角色要求 (總覽/詳情)
 
 
 class PageManager:
@@ -139,6 +141,14 @@ class PageManager:
         # 9. Check for Communication Error (連線錯誤)
         if any(kw in combined_text for kw in ["通訊錯誤", "連線中斷", "重試", "返回標題"]):
             return PageType.COMM_ERROR, metadata
+
+        # 10. Check for Character Requests (角色要求 總覽或詳情)
+        if any("角色要求" in item[0] and item[1][1] < 200 for item in ocr_items):
+            return PageType.CHARACTER_REQUESTS, metadata
+
+        # 11. Check for Personal Base (個人基地主頁)
+        if any(kw in combined_text for kw in ["出現中要求", "巡視", "房間設定", "出沒中的單位"]):
+            return PageType.PERSONAL_BASE, metadata
 
         # Unrecognized screen
         return PageType.UNKNOWN, metadata

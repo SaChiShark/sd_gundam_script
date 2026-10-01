@@ -61,44 +61,22 @@ class PersonalBaseRequestTask(BaseTask):
     def _enter_personal_base(self, max_attempts: int = 3) -> bool:
         """Navigate to Personal Base screen from Home."""
         logger.info("Navigating to 個人基地 (Personal Base)...")
+        if self.fsm:
+            return self.fsm.navigate_to_personal_base()
 
-        for attempt in range(max_attempts):
-            frame = self.device.screencap()
-
-            # Dismiss unexpected popups first
-            self._dismiss_any_popup()
-
-            # Try template matching nav_base button
-            if nav_btn := self.vision.match_template(frame, "assets/buttons/nav_base.png", threshold=0.80):
-                logger.info(f"Matched nav_base button at {nav_btn.center}. Tapping...")
-                self.device.tap_rect(nav_btn.rect)
-            else:
-                # Calibrated coordinates in bottom bar for '個人基地'
-                logger.info("Tapping bottom bar 個人基地 by calibrated coordinates (1200, 990)...")
-                self.device.tap(1200, 990)
-
-            self.device.random_sleep(2.5, 3.5)
-
-            # Check if we see the '角色要求' banner in Base
-            base_frame = self.device.screencap()
-            if self.vision.match_template(base_frame, "assets/buttons/base_char_request.png", threshold=0.75):
-                logger.success("Successfully arrived at 個人基地 screen.")
-                return True
-
-        return False
+        # Fallback if FSM not initialized
+        self.device.tap(1292, 1020)
+        self.device.random_sleep(2.5, 3.5)
+        return True
 
     def _open_character_requests(self) -> bool:
         """Find and open the '角色要求' section in Personal Base."""
         logger.info("Locating '角色要求' entrance banner...")
-        frame = self.device.screencap()
+        if self.fsm:
+            return self.fsm.navigate_to_character_requests()
 
-        if req_match := self.vision.match_template(frame, "assets/buttons/base_char_request.png", threshold=0.75):
-            logger.info(f"Found '角色要求' at {req_match.center}. Tapping...")
-            self.device.tap_rect(req_match.rect)
-        else:
-            logger.info("Tapping '角色要求' by calibrated coordinates (1510, 315)...")
-            self.device.tap(1510, 315)
-
+        # Fallback if FSM not initialized
+        self.device.tap(1510, 315)
         self.device.random_sleep(2.5, 3.5)
         return True
 
@@ -164,16 +142,22 @@ class PersonalBaseRequestTask(BaseTask):
         """Iterate over the 3 daily character slots."""
         for slot_idx, (sx, sy) in enumerate(self.SLOT_COORDINATES, start=1):
             logger.info(f"--- Processing Daily Slot [{slot_idx}/3] at ({sx}, {sy}) ---")
-            self.device.tap(sx, sy)
-            self.device.random_sleep(2.0, 2.5)
+            if self.fsm:
+                self.fsm.select_character_request_slot(slot_idx)
+            else:
+                self.device.tap(sx, sy)
+                self.device.random_sleep(2.0, 2.5)
 
             # Inspect and execute accept/claim in detail panel
             self._handle_detail_action()
 
-            # Return to 3-slot overview via top-left back arrow (60, 50)
-            logger.info("Returning to 3-slot overview via back button (60, 50)...")
-            self.device.tap(60, 50)
-            self.device.random_sleep(1.5, 2.0)
+            # Return to 3-slot overview via top-left back button
+            logger.info("Returning to 3-slot overview via back button...")
+            if self.fsm:
+                self.fsm.go_back()
+            else:
+                self.device.tap(65, 55)
+                self.device.random_sleep(1.5, 2.0)
 
     def _claim_weekly_milestones(self) -> None:
         """Check and tap weekly reward milestones (5, 10, 15, 20 completions)."""
