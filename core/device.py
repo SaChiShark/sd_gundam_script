@@ -6,6 +6,7 @@ import subprocess
 import time
 from typing import List, Optional, Tuple
 
+import adbutils
 import cv2
 import numpy as np
 from loguru import logger
@@ -24,100 +25,50 @@ class AdbCommandError(Exception):
 
 
 class Device:
-    """High-performance ADB wrapper with human-like interaction emulation."""
+    """High-performance ADB wrapper with human-like interaction emulation using adbutils socket."""
 
-    def __init__(self, config: Optional[DeviceConfig] = None):
+    def __init__(
+        self,
+        config: Optional[DeviceConfig] = None,
+        serial: Optional[str] = None
+    ):
         self.config = config or DeviceConfig()
-        self.adb_bin = self._resolve_adb_path(self.config.adb_path)
-        self.serial: Optional[str] = self.config.serial
         self.host = self.config.host
         self.port = self.config.port
+        self.serial: Optional[str] = serial or self.config.serial
+        self._adb = adbutils.AdbClient(host="127.0.0.1", port=5037)
+        self._device: Optional[adbutils.AdbDevice] = None
         self._connected = False
 
-    def _resolve_adb_path(self, preferred_path: Optional[str]) -> str:
-        """Find a valid ADB binary on the host system."""
-        if preferred_path and os.path.isfile(preferred_path):
-            return preferred_path
-
-        # Check system PATH
-        which_adb = shutil.which("adb")
-        if which_adb:
-            return which_adb
-
-        # Check common emulator ADB locations
-        candidates = [
-            r"C:\Program Files\BlueStacks_nxt\HD-Adb.exe",
-            r"C:\Program Files\Netease\MuMuPlayer-12.0\shell\adb.exe",
-            r"C:\leidian\LDPlayer9\adb.exe",
-            r"C:\Program Files\Nox\bin\nox_adb.exe",
-        ]
-        for c in candidates:
-            if os.path.isfile(c):
-                return c
-
-        raise FileNotFoundError(
-            "Could not locate an ADB executable. Please specify adb_path in config.yaml or add adb to PATH."
-        )
-
-    def _run_adb_cmd(
-        self,
-        args: List[str],
-        with_target: bool = True,
-        timeout: float = 10.0,
-        binary_output: bool = False
-    ) -> subprocess.CompletedProcess:
-        """Run an ADB command safely with timeout handling."""
-        cmd = [self.adb_bin]
-        if with_target and self.serial:
-            cmd.extend(["-s", self.serial])
-        cmd.extend(args)
-
-        try:
-            res = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=timeout
-            )
-            return res
-        except subprocess.TimeoutExpired as e:
-            logger.error(f"ADB command timed out after {timeout}s: {' '.join(cmd)}")
-            raise AdbCommandError(f"ADB command timed out: {e}") from e
-
     def connect(self) -> bool:
-        """Establish connection to the emulator device."""
+        """Establish connection to the emulator device via adbutils."""
         target_addr = f"{self.host}:{self.port}"
-        logger.info(f"Connecting to ADB target: {target_addr} via {self.adb_bin}...")
 
-        # Run connect command
-        connect_res = self._run_adb_cmd(["connect", target_addr], with_target=False, timeout=8.0)
-        connect_out = connect_res.stdout.decode("utf-8", errors="ignore").strip()
-        logger.debug(f"ADB connect response: {connect_out}")
+        devices = self._adb.device_list()
+        if not devices:
+            try:
+                self._adb.connect(target_addr)
+                devices = self._adb.device_list()
+            except Exception as e:
+                logger.debug(f"ADB connect attempt: {e}")
 
-        # List attached devices to identify matching serial
-        devices_res = self._run_adb_cmd(["devices"], with_target=False, timeout=5.0)
-        lines = devices_res.stdout.decode("utf-8", errors="ignore").strip().splitlines()
-        
-        attached_devices = []
-        for line in lines[1:]:
-            parts = line.split()
-            if len(parts) >= 2 and parts[1] == "device":
-                attached_devices.append(parts[0])
-
-        if not attached_devices:
+        if not devices:
             raise DeviceConnectionError(
-                f"No authorized devices found on ADB. Ensure emulator ADB is enabled. Output: {connect_out}"
+                f"No authorized devices found on ADB. Ensure emulator ADB is enabled."
             )
 
-        # Match serial or select first available
-        if self.serial and self.serial in attached_devices:
-            logger.info(f"Found targeted device serial: {self.serial}")
-        elif target_addr in attached_devices:
+        serials = [d.serial for d in devices]
+        if self.serial and self.serial in serials:
+            self._device = self._adb.device(self.serial)
+            logger.info(f"Connected to targeted device serial: {self.serial}")
+        elif target_addr in serials:
             self.serial = target_addr
-            logger.info(f"Using target address serial: {self.serial}")
+            self._device = self._adb.device(self.serial)
+            logger.info(f"Connected to target address serial: {self.serial}")
         else:
-            self.serial = attached_devices[0]
-            logger.info(f"Using default discovered device serial: {self.serial}")
+            self.serial = serials[0]
+            self._device = self._adb.device(self.serial)
+            logger.info(f"Connected to discovered device serial: {self.serial}")
 
         self._connected = True
         logger.success(f"Device successfully connected: {self.serial}")
@@ -125,31 +76,21 @@ class Device:
 
     def screencap(self) -> np.ndarray:
         """
-        Capture current screen as an OpenCV BGR image using in-memory binary stream.
-        Zero disk I/O for minimum latency (<100ms).
+        Capture current screen as an OpenCV BGR image using adbutils socket stream.
+        Zero disk I/O for minimum latency.
         """
-        if not self._connected:
+        if not self._connected or self._device is None:
             self.connect()
 
-        res = self._run_adb_cmd(
-            ["exec-out", "screencap", "-p"],
-            with_target=True,
-            timeout=self.config.screencap_timeout,
-            binary_output=True
-        )
-
-        if res.returncode != 0 or not res.stdout:
-            err = res.stderr.decode("utf-8", errors="ignore")
-            logger.error(f"Screencap failed: {err}")
-            raise AdbCommandError(f"Failed to capture screen: {err}")
-
-        # Decode image from binary buffer directly
-        raw_bytes = np.frombuffer(res.stdout, dtype=np.uint8)
-        img = cv2.imdecode(raw_bytes, cv2.IMREAD_COLOR)
-        if img is None:
-            raise AdbCommandError("Failed to decode screencap bytes into OpenCV BGR image.")
-
-        return img
+        try:
+            pil_img = self._device.screenshot()
+            # Convert RGB PIL image to BGR OpenCV numpy array
+            rgb_arr = np.array(pil_img)
+            bgr_arr = cv2.cvtColor(rgb_arr, cv2.COLOR_RGB2BGR)
+            return bgr_arr
+        except Exception as e:
+            logger.error(f"Screencap failed: {e}")
+            raise AdbCommandError(f"Failed to capture screen: {e}") from e
 
     def tap(
         self,
@@ -161,19 +102,17 @@ class Device:
         """
         Human-like randomized tap around (x, y) with slight Gaussian jitter.
         """
-        if not self._connected:
+        if not self._connected or self._device is None:
             self.connect()
 
-        # Gaussian jitter within safe radius
         offset_x = int(random.gauss(0, radius / 2))
         offset_y = int(random.gauss(0, radius / 2))
         target_x = max(0, x + max(-radius, min(radius, offset_x)))
         target_y = max(0, y + max(-radius, min(radius, offset_y)))
 
         logger.debug(f"Tap: requested=({x}, {y}) -> actual=({target_x}, {target_y})")
-        self._run_adb_cmd(["shell", "input", "tap", str(target_x), str(target_y)])
+        self._device.click(target_x, target_y)
 
-        # Randomized post-tap sleep
         sleep_dur = random.uniform(delay_after[0], delay_after[1])
         time.sleep(sleep_dur)
 
@@ -212,73 +151,67 @@ class Device:
         Perform a human-like swipe with Bezier curve interpolation.
         Prevents mechanical linear trajectory detection.
         """
+        if not self._connected or self._device is None:
+            self.connect()
+
         x1, y1 = start_pt
         x2, y2 = end_pt
 
-        # Random control point to produce curve
-        cx = (x1 + x2) // 2 + random.randint(-40, 40)
-        cy = (y1 + y2) // 2 + random.randint(-40, 40)
-
-        # Generate quadratic Bezier points: B(t) = (1-t)^2*P0 + 2(1-t)t*P1 + t^2*P2
-        points = []
-        for i in range(steps + 1):
-            t = i / steps
-            px = int((1 - t)**2 * x1 + 2 * (1 - t) * t * cx + t**2 * x2)
-            py = int((1 - t)**2 * y1 + 2 * (1 - t) * t * cy + t**2 * y2)
-            points.append((px, py))
-
-        # Perform drag/swipe via adb input
-        # Note: Android shell input swipe accepts x1 y1 x2 y2 duration
-        # For simple robust execution we supply start, end, and duration with jitter
-        jittered_dur = int(duration_ms * random.uniform(0.9, 1.15))
-        self._run_adb_cmd([
-            "shell", "input", "swipe",
-            str(x1), str(y1), str(x2), str(y2), str(jittered_dur)
-        ])
+        dur_s = max(0.2, duration_ms / 1000.0)
+        jittered_dur = dur_s * random.uniform(0.9, 1.15)
+        self._device.swipe(x1, y1, x2, y2, jittered_dur)
         time.sleep(random.uniform(0.5, 0.8))
 
     def key_back(self) -> None:
         """Simulate pressing Android BACK key (KEYCODE_BACK = 4)."""
+        if not self._connected or self._device is None:
+            self.connect()
         logger.debug("Device input: KEYCODE_BACK")
-        self._run_adb_cmd(["shell", "input", "keyevent", "4"])
+        self._device.keyevent(4)
         time.sleep(random.uniform(0.6, 1.0))
 
     def key_home(self) -> None:
         """Simulate pressing Android HOME key (KEYCODE_HOME = 3)."""
+        if not self._connected or self._device is None:
+            self.connect()
         logger.debug("Device input: KEYCODE_HOME")
-        self._run_adb_cmd(["shell", "input", "keyevent", "3"])
+        self._device.keyevent(3)
         time.sleep(random.uniform(0.8, 1.2))
 
     def is_app_running(self, package_name: str) -> bool:
         """Check if an application process is running."""
-        res = self._run_adb_cmd(["shell", "pidof", package_name])
-        return bool(res.stdout.decode("utf-8", errors="ignore").strip())
+        if not self._connected or self._device is None:
+            self.connect()
+        out = self._device.shell(f"pidof {package_name}").strip()
+        return bool(out)
 
     def is_app_foreground(self, package_name: str) -> bool:
         """Check if an application is currently focused in the foreground."""
-        res = self._run_adb_cmd(["shell", "dumpsys", "window"])
-        output = res.stdout.decode("utf-8", errors="ignore")
-        for line in output.splitlines():
+        if not self._connected or self._device is None:
+            self.connect()
+        out = self._device.shell("dumpsys window")
+        for line in out.splitlines():
             if "mCurrentFocus" in line and package_name in line:
                 return True
         return False
 
     def launch_app(self, package_name: str, activity: Optional[str] = None) -> None:
         """Launch an application using am start or monkey."""
+        if not self._connected or self._device is None:
+            self.connect()
         logger.info(f"Launching app: {package_name}...")
         if activity:
-            self._run_adb_cmd(["shell", "am", "start", "-n", f"{package_name}/{activity}"])
+            self._device.shell(f"am start -n {package_name}/{activity}")
         else:
-            self._run_adb_cmd([
-                "shell", "monkey", "-p", package_name,
-                "-c", "android.intent.category.LAUNCHER", "1"
-            ])
+            self._device.shell(f"monkey -p {package_name} -c android.intent.category.LAUNCHER 1")
         time.sleep(random.uniform(2.5, 3.5))
 
     def stop_app(self, package_name: str) -> None:
         """Force stop an application."""
+        if not self._connected or self._device is None:
+            self.connect()
         logger.info(f"Stopping app: {package_name}...")
-        self._run_adb_cmd(["shell", "am", "force-stop", package_name])
+        self._device.shell(f"am force-stop {package_name}")
         time.sleep(random.uniform(0.5, 1.0))
 
     def random_sleep(self, min_sec: float = 0.5, max_sec: float = 1.2) -> None:
