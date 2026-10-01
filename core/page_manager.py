@@ -132,7 +132,9 @@ class PageManager:
             return PageType.MODAL_INFO, metadata
 
         # 8. Check for Modal Confirm (二度確認彈窗)
-        if any(kw in combined_text for kw in ["是否確定", "確認執行", "消耗AP", "放棄", "確定要放棄"]):
+        is_two_button_confirm = "取消" in combined_text and any(btn in combined_text for btn in ["確定", "執行", "OK"])
+        has_confirm_keyword = any(kw in combined_text for kw in ["是否確定", "確認執行", "消耗AP", "放棄", "確定要放棄", "確認捨棄", "確舍", "捨棄", "拒絕", "確定要"])
+        if is_two_button_confirm or has_confirm_keyword:
             for text, center, _ in ocr_items:
                 if "確定" in text or "執行" in text:
                     metadata["confirm_btn_center"] = center

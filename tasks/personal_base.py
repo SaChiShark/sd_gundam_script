@@ -27,6 +27,7 @@ class CharacterRequestType(Enum):
     ENHANCE_UNIT = auto()     # 強化部隊任務 (承接後挑選未滿等低階機體注入 1 級數據)
     CLEAR_STAGE = auto()      # 請求出擊任務 (承接後出擊/掃蕩指定關卡)
     EVENT_STAGE = auto()      # 事件關卡任務 (使用者守則：暫由使用者手動處理，腳本略過)
+    DELIVER_UNIT = auto()     # 交付機體任務 (交出指定機體，涉及機體資產消耗，主動請示)
 
 
 @dataclass
@@ -158,17 +159,19 @@ class PersonalBaseRequestTask(BaseTask):
                     button_type = "challenge"
                     break
 
-        # Classify Request Type
-        full_desc = f"{title} {requirement_text} {combined_text}"
-        if any(kw in full_desc for kw in ["奪取", "捕獲"]):
+        # Classify Request Type based strictly on task title and requirement text
+        task_desc = f"{title} {requirement_text}"
+        if any(kw in task_desc for kw in ["交付機體", "交出"]):
+            req_type = CharacterRequestType.DELIVER_UNIT
+        elif any(kw in task_desc for kw in ["奪取", "捕獲"]):
             req_type = CharacterRequestType.CAPTURE_UNIT
-        elif "事件關卡" in full_desc:
+        elif "事件關卡" in task_desc:
             req_type = CharacterRequestType.EVENT_STAGE
-        elif any(kw in full_desc for kw in ["委託開發", "開發"]):
+        elif any(kw in task_desc for kw in ["委託開發", "開發"]):
             req_type = CharacterRequestType.DEVELOP_UNIT
-        elif any(kw in full_desc for kw in ["強化部隊", "強化"]):
+        elif any(kw in task_desc for kw in ["強化部隊", "強化"]):
             req_type = CharacterRequestType.ENHANCE_UNIT
-        elif any(kw in full_desc for kw in ["請求出擊", "出擊"]):
+        elif any(kw in task_desc for kw in ["請求出擊", "出擊"]):
             req_type = CharacterRequestType.CLEAR_STAGE
         else:
             req_type = CharacterRequestType.UNKNOWN
