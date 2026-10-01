@@ -28,6 +28,8 @@ class PageType(Enum):
     ITEM_ACQUIRED = "item_acquired"           # 結算/獲得道具視窗 (帶「OK」按鈕)
     PERSONAL_BASE = "personal_base"           # 個人基地主畫面
     CHARACTER_REQUESTS = "character_requests" # 角色要求 (總覽/詳情)
+    MODAL_DELIVER = "modal_deliver"           # 確認交付機體視窗
+    DIALOGUE = "dialogue"                     # 角色對話/劇情視窗 (右上角帶「略過」)
 
 
 class PageManager:
@@ -100,8 +102,19 @@ class PageManager:
         if any(kw in combined_text for kw in ["TOUCH TO START", "TOUCHTOSTART", "資料同步"]):
             return PageType.TITLE_SCREEN, metadata
 
-        # 6. Check for Item Acquired / Skip Result (獲得/結算彈窗)
-        if any(kw in combined_text for kw in ["SKIP RESULT", "獲得", "PLAYER RANK EXP"]):
+        # 6. Check for Deliver Unit Modal (確認交付彈窗)
+        if "確認交付" in combined_text or "交付單位" in combined_text or "可交付單位" in combined_text:
+            for text, center, _ in ocr_items:
+                if text == "取消":
+                    metadata["cancel_btn_center"] = center
+                elif text == "交付":
+                    metadata["deliver_btn_center"] = center
+            return PageType.MODAL_DELIVER, metadata
+
+        # 7. Check for Item Acquired / Skip Result / Claim Result (獲得/領取/結算彈窗)
+        has_acquire_keyword = any(kw in combined_text for kw in ["SKIP RESULT", "PLAYER RANK EXP", "領取結果", "已領取", "領取", "報酬", "獲得"])
+        has_ok_button = any(item[0] == "OK" for item in ocr_items)
+        if (has_acquire_keyword and has_ok_button and "獲得方法" not in combined_text) or any(kw in combined_text for kw in ["SKIP RESULT", "PLAYER RANK EXP"]):
             for text, center, _ in ocr_items:
                 if text == "OK":
                     metadata["ok_btn_center"] = center
@@ -151,6 +164,13 @@ class PageManager:
         # 11. Check for Personal Base (個人基地主頁)
         if any(kw in combined_text for kw in ["出現中要求", "巡視", "房間設定", "出沒中的單位"]):
             return PageType.PERSONAL_BASE, metadata
+
+        # 12. Check for Character Dialogue (角色對話，右上角帶略過)
+        if any(item[0] == "略過" and item[1][0] > 1600 and item[1][1] < 150 for item in ocr_items):
+            for text, center, _ in ocr_items:
+                if text == "略過":
+                    metadata["skip_btn_center"] = center
+            return PageType.DIALOGUE, metadata
 
         # Unrecognized screen
         return PageType.UNKNOWN, metadata
@@ -219,6 +239,14 @@ class PageManager:
         logger.info("[PageHandler] 處理遊戲標題畫面：點擊中央進入...")
         self.device.tap(960, 750)
         self.device.random_sleep(3.0, 4.5)
+        return True
+
+    def handle_dialogue(self, frame: np.ndarray, metadata: Dict[str, Any]) -> bool:
+        """Handle character dialogue scene by tapping '略過' (Skip)."""
+        logger.info("[PageHandler] 處理角色對話：點擊右上『略過』...")
+        center = metadata.get("skip_btn_center", (1850, 60))
+        self.device.tap(center[0], center[1])
+        self.device.random_sleep(1.5, 2.0)
         return True
 
     def handle_unknown_page(self, frame: np.ndarray, metadata: Dict[str, Any]) -> None:
@@ -306,6 +334,9 @@ class PageManager:
 
             elif page_type == PageType.TITLE_SCREEN:
                 self.handle_title_screen(frame, metadata)
+
+            elif page_type == PageType.DIALOGUE:
+                self.handle_dialogue(frame, metadata)
 
             elif page_type == PageType.UNKNOWN:
                 self.handle_unknown_page(frame, metadata)

@@ -56,9 +56,9 @@ class PersonalBaseRequestTask(BaseTask):
 
     # Screen coordinates for the 3 daily character slots on 1920x1080
     SLOT_COORDINATES: List[Tuple[int, int]] = [
-        (220, 400),  # Slot 1 (Left card)
-        (500, 400),  # Slot 2 (Middle card)
-        (780, 400),  # Slot 3 (Right card)
+        (425, 420),   # Slot 1 (Left card)
+        (960, 420),   # Slot 2 (Middle card)
+        (1495, 420),  # Slot 3 (Right card)
     ]
 
     # Weekly reward milestones (5, 10, 15, 20) at bottom bar

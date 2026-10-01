@@ -46,9 +46,9 @@ class NavigationCoords:
 
     # Character Requests Overview 3-Slot Cards
     CHAR_REQ_SLOT_CARDS: List[Tuple[int, int]] = [
-        (220, 400),  # Slot 1
-        (500, 400),  # Slot 2
-        (780, 400),  # Slot 3
+        (425, 420),   # Slot 1
+        (960, 420),   # Slot 2
+        (1495, 420),  # Slot 3
     ]
 
     # Character Requests Detail Card Navigation Arrows
