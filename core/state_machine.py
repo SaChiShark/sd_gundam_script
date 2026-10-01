@@ -55,6 +55,11 @@ class NavigationCoords:
     CHAR_REQ_ARROW_PREV: Tuple[int, int] = (30, 490)
     CHAR_REQ_ARROW_NEXT: Tuple[int, int] = (1888, 490)
 
+    # Character Requests Detail Action Buttons
+    CHAR_REQ_TRASH_CAN: Tuple[int, int] = (1752, 182)
+    CHAR_REQ_ACCEPT_BUTTON: Tuple[int, int] = (1623, 800)
+    CHAR_REQ_DIALOG_SKIP: Tuple[int, int] = (1850, 60)
+
 
 class HomeAnchorROI:
     """
@@ -276,6 +281,39 @@ class StateMachine:
             return False
 
         self.device.tap(coords[0], coords[1])
+        self.device.random_sleep(1.5, 2.0)
+        return True
+
+    def abandon_current_character_request(self) -> bool:
+        """
+        Abandon the currently viewed character request by tapping the trash can,
+        resolving the confirmation popup via PageManager, and waiting for the new task to appear.
+        """
+        logger.info(f"[StateMachine] Abandoning character request via trash can at {NavigationCoords.CHAR_REQ_TRASH_CAN}...")
+        self.device.tap(NavigationCoords.CHAR_REQ_TRASH_CAN[0], NavigationCoords.CHAR_REQ_TRASH_CAN[1])
+        self.device.random_sleep(1.5, 2.0)
+
+        # Confirm abandonment modal
+        frame = self.device.screencap()
+        ptype, _ = self.page_manager.classify(frame)
+        logger.info(f"[StateMachine] Popup type after tapping trash can: {ptype.name}")
+        self.page_manager.resolve_page(frame, max_attempts=2)
+        self.device.random_sleep(2.5, 3.5)
+
+        logger.success("[StateMachine] Character request abandoned. New task should be rendered.")
+        return True
+
+    def accept_current_character_request(self) -> bool:
+        """
+        Accept the currently viewed character request and skip any resulting dialogue.
+        """
+        logger.info(f"[StateMachine] Accepting character request at {NavigationCoords.CHAR_REQ_ACCEPT_BUTTON}...")
+        self.device.tap(NavigationCoords.CHAR_REQ_ACCEPT_BUTTON[0], NavigationCoords.CHAR_REQ_ACCEPT_BUTTON[1])
+        self.device.random_sleep(2.0, 3.0)
+
+        # Skip dialogue if present
+        logger.info(f"[StateMachine] Skipping dialogue at {NavigationCoords.CHAR_REQ_DIALOG_SKIP}...")
+        self.device.tap(NavigationCoords.CHAR_REQ_DIALOG_SKIP[0], NavigationCoords.CHAR_REQ_DIALOG_SKIP[1])
         self.device.random_sleep(1.5, 2.0)
         return True
 
