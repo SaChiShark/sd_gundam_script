@@ -40,6 +40,7 @@ class DailyCultivationTask(BaseTask):
     NEXT_CATEGORY_BTN: Tuple[int, int] = (1880, 500)  # Next category carousel arrow '>'
     PREV_CATEGORY_BTN: Tuple[int, int] = (20, 500)    # Prev category carousel arrow '<'
     TOP_STAGE_CARD: Tuple[int, int] = (450, 520)      # Top item in stage list (Highest difficulty LV6)
+    BTN_COUNT_MAX: Tuple[int, int] = (1280, 445)      # Sweep modal '[>>]' (Max Count) button
     SKIP_BTN: Tuple[int, int] = (1685, 685)           # Stage detail panel '略過' (Skip) button
     EXECUTE_BTN: Tuple[int, int] = (1148, 790)        # Sweep modal '執行' button
     REWARD_OK_BTN: Tuple[int, int] = (1680, 940)      # Sweep reward modal 'OK' button
@@ -167,19 +168,26 @@ class DailyCultivationTask(BaseTask):
 
 
     def execute_sweep(self) -> bool:
-        """Execute sweep on currently selected stage."""
+        """Execute sweep on currently selected stage with adaptive MAX sweep count."""
         logger.info("Tapping '略過' button...")
         self.device.tap(self.SKIP_BTN[0], self.SKIP_BTN[1])
         self.device.random_sleep(1.2, 1.8)
 
         # Confirm execute
         modal_frame = self.device.screencap()
+
+        # Tap [>>] (Max Count) button to ensure maximum count is selected under any daily event limit
+        logger.info(f"Tapping '[>>]' (Max Count) button at {self.BTN_COUNT_MAX} to adapt to any sweep limit...")
+        self.device.tap(self.BTN_COUNT_MAX[0], self.BTN_COUNT_MAX[1])
+        self.device.random_sleep(0.4, 0.7)
+
         if exec_match := self.vision.match_template(modal_frame, "assets/buttons/btn_skip_execute.png", threshold=0.75):
             logger.info(f"Found '執行' button at {exec_match.center}. Tapping...")
             self.device.tap_rect(exec_match.rect)
         else:
             logger.info(f"Tapping '執行' by calibrated position {self.EXECUTE_BTN}...")
             self.device.tap(self.EXECUTE_BTN[0], self.EXECUTE_BTN[1])
+
 
         # Wait for skip battle animation (approx 3.5 - 4.5 seconds)
         logger.info("Waiting for skip animation to conclude...")

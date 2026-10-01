@@ -37,6 +37,8 @@ def test_daily_cultivation_initialization():
     assert task.CATEGORIES[1] == "單位培育"
     assert task.CATEGORIES[2] == "角色培育"
     assert task.CATEGORIES[3] == "支援人員培育"
+    assert task.BTN_COUNT_MAX == (1280, 445)
+
 
 
 def test_skip_button_color_detection():
