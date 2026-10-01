@@ -249,14 +249,31 @@ class Device:
         self._run_adb_cmd(["shell", "input", "keyevent", "3"])
         time.sleep(random.uniform(0.8, 1.2))
 
-    def launch_app(self, package_name: str) -> None:
-        """Launch an application using monkey tool."""
+    def is_app_running(self, package_name: str) -> bool:
+        """Check if an application process is running."""
+        res = self._run_adb_cmd(["shell", "pidof", package_name])
+        return bool(res.stdout.decode("utf-8", errors="ignore").strip())
+
+    def is_app_foreground(self, package_name: str) -> bool:
+        """Check if an application is currently focused in the foreground."""
+        res = self._run_adb_cmd(["shell", "dumpsys", "window"])
+        output = res.stdout.decode("utf-8", errors="ignore")
+        for line in output.splitlines():
+            if "mCurrentFocus" in line and package_name in line:
+                return True
+        return False
+
+    def launch_app(self, package_name: str, activity: Optional[str] = None) -> None:
+        """Launch an application using am start or monkey."""
         logger.info(f"Launching app: {package_name}...")
-        self._run_adb_cmd([
-            "shell", "monkey", "-p", package_name,
-            "-c", "android.intent.category.LAUNCHER", "1"
-        ])
-        time.sleep(random.uniform(2.0, 3.5))
+        if activity:
+            self._run_adb_cmd(["shell", "am", "start", "-n", f"{package_name}/{activity}"])
+        else:
+            self._run_adb_cmd([
+                "shell", "monkey", "-p", package_name,
+                "-c", "android.intent.category.LAUNCHER", "1"
+            ])
+        time.sleep(random.uniform(2.5, 3.5))
 
     def stop_app(self, package_name: str) -> None:
         """Force stop an application."""

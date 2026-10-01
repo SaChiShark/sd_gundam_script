@@ -118,49 +118,56 @@ class StateMachine:
 
             action_taken = False
 
-            # 2. Check for "Don't show today" checkbox (優先勾選「今日不再顯示」)
+            # 2. Check for Title Screen (TAP TO START / 資料同步)
             try:
-                if cb := self.vision.match_template(frame, "assets/buttons/checkbox_unchecked.png", threshold=0.85):
-                    logger.info("Found 'Don't show today' checkbox. Tapping to check...")
-                    self.device.tap_rect(cb.rect)
-                    action_taken = True
-                    last_action_time = time.time()
-            except FileNotFoundError:
-                pass
-
-            # 3. Check for Close 'X' buttons
-            try:
-                if btn_x := self.vision.match_template(frame, "assets/buttons/btn_close_x.png", threshold=0.82):
-                    logger.info("Detected popup close button (X). Tapping...")
-                    self.device.tap_rect(btn_x.rect)
-                    action_taken = True
-                    last_action_time = time.time()
-            except FileNotFoundError:
-                pass
-
-            # 4. Check for Confirmation / Claim buttons (OK, 確定, 領取)
-            try:
-                if btn_ok := self.vision.match_template(frame, "assets/buttons/btn_confirm.png", threshold=0.82):
-                    logger.info("Detected confirm/claim button. Tapping...")
-                    self.device.tap_rect(btn_ok.rect)
-                    action_taken = True
-                    last_action_time = time.time()
-            except FileNotFoundError:
-                pass
-
-            # 5. Check for Title Screen (TOUCH TO START)
-            try:
-                if title_anchor := self.vision.match_template(frame, "assets/anchors/title_screen.png", threshold=0.80):
+                if self.vision.match_template(frame, "assets/anchors/title_tap_to_start.png", threshold=0.75) or \
+                   self.vision.match_template(frame, "assets/anchors/title_data_sync.png", threshold=0.75):
                     logger.info("Detected Title Screen. Tapping center to start...")
                     self.device.tap(960, 750, radius=20)
                     action_taken = True
                     last_action_time = time.time()
+                    self.device.random_sleep(2.0, 3.0)
+                    continue
             except FileNotFoundError:
                 pass
 
-            # 6. Fallback Interception: If no known buttons matched and state has been static for > 3s
-            if not action_taken and (time.time() - last_action_time > 3.0):
-                logger.debug("No active UI matched for 3s. Sending KEYCODE_BACK to dismiss potential modal...")
+            # 3. Check for Close buttons (btn_close_gray.png, btn_close_blue.png)
+            try:
+                for close_tmpl in ["assets/buttons/btn_close_gray.png", "assets/buttons/btn_close_blue.png"]:
+                    if btn_close := self.vision.match_template(frame, close_tmpl, threshold=0.80):
+                        logger.info(f"Detected popup close button ({close_tmpl}). Tapping...")
+                        self.device.tap_rect(btn_close.rect)
+                        action_taken = True
+                        last_action_time = time.time()
+                        break
+            except FileNotFoundError:
+                pass
+
+            # 4. Check for Confirmation / OK buttons (btn_modal_ok.png)
+            try:
+                if not action_taken:
+                    if btn_ok := self.vision.match_template(frame, "assets/buttons/btn_modal_ok.png", threshold=0.80):
+                        logger.info("Detected OK/confirm button. Tapping...")
+                        self.device.tap_rect(btn_ok.rect)
+                        action_taken = True
+                        last_action_time = time.time()
+            except FileNotFoundError:
+                pass
+
+            # 5. Check for "Don't show today" checkbox if template exists
+            try:
+                if not action_taken:
+                    if cb := self.vision.match_template(frame, "assets/buttons/checkbox_unchecked.png", threshold=0.85):
+                        logger.info("Found 'Don't show today' checkbox. Tapping to check...")
+                        self.device.tap_rect(cb.rect)
+                        action_taken = True
+                        last_action_time = time.time()
+            except FileNotFoundError:
+                pass
+
+            # 6. Fallback Interception: If no known buttons matched and state has been static for > 4s
+            if not action_taken and (time.time() - last_action_time > 4.0):
+                logger.debug("No active UI matched for 4s. Sending KEYCODE_BACK to dismiss potential modal...")
                 self.device.key_back()
                 last_action_time = time.time()
 
