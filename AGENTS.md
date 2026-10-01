@@ -8,18 +8,30 @@ All AI agents (Antigravity, Gemini, etc.) working on this repository MUST strict
 
 ## 1. Core Engineering Principles
 
-1. **Non-Invasive UI Automation (Black-box Only)**
+1. **Pre-Execution Planning (執行前規劃 - Mandatory)**
+   - Before performing multi-step actions, code refactors, or live emulator interactions, the AI Agent MUST first present a clear, structured execution plan to the user.
+   - Do NOT perform arbitrary, unannounced trial-and-error actions or blind clicks on live accounts. Proceed only after the plan is aligned and confirmed.
+2. **Real-Time Operational Transparency (執行過程中即時回報操作)**
+   - The AI Agent and automation scripts MUST explicitly output and log what action is currently being executed at every stage (e.g., current UI state, target button, OCR match result, coordinate tapped, waiting status).
+   - Never perform actions silently in the background without informing the user what is happening.
+3. **Non-Invasive UI Automation (Black-box Only)**
    - Never inject DLLs, read/write game process memory, or decrypt/forge network packets.
    - Rely solely on screen capture (ADB / streaming), computer vision (Template Matching / OCR), and simulated touch inputs (ADB input).
-2. **Human-like Simulation & Anti-Detection**
+4. **Human-like Simulation & Anti-Detection**
    - **No absolute single-pixel clicks**: Always randomize coordinates within the target UI bounding box (Gaussian or uniform random with safety padding).
    - **No constant sleep timings**: Always introduce random jitter delays (`random.uniform(min, max)`).
    - **Smooth swipe trajectories**: Use Bezier curve interpolation for swipe motions rather than instantaneous linear teleportation.
-3. **Resilience & State-Driven Control (No Hardcoded Time Sequences)**
+5. **Resilience & State-Driven Control (No Hardcoded Time Sequences)**
    - Never chain blind clicks using fixed `time.sleep()`. All state transitions must be verified by UI anchors or template/text matching.
    - Implement global popup interceptors (announcements, login rewards, disconnect notices) before task actions.
    - Include auto-recovery: If the script is lost in an unknown state for >30s, iteratively press `BACK` until a known anchor (Home screen) is reached.
-4. **Modularity & Extensibility**
+6. **Unknown Task Safety Guardrail (未辨識任務安全防護)**
+   - If an unrecognized, unseen, or unsupported task requirement is detected during automated workflows, the script MUST:
+     1. Automatically capture and save a full screenshot to `captures/unknown_tasks/{timestamp}_{name}.png`.
+     2. Record the metadata and raw OCR text to `captures/unknown_tasks/unknown_tasks_log.json`.
+     3. Output an alert in the terminal/log to notify the user.
+     4. Safely return to the previous screen without blind clicking.
+7. **Modularity & Extensibility**
    - Tasks must inherit from `BaseTask` and remain decoupled from one another.
    - New daily routines can be toggled on/off independently via configuration.
 
