@@ -162,7 +162,9 @@ class PageManager:
             return PageType.CHARACTER_REQUESTS, metadata
 
         # 11. Check for Personal Base (個人基地主頁)
-        if any(kw in combined_text for kw in ["出現中要求", "巡視", "房間設定", "出沒中的單位"]):
+        has_base_header = any("個人基地" in it[0] and it[1][1] < 150 for it in ocr_items)
+        has_base_facility = any(f in combined_text for f in ["MS船塢", "戰艦巡航", "戰術訓練", "出現限定要求", "出現中要求", "巡視", "房間設定", "出沒中的單位"])
+        if has_base_header or has_base_facility:
             return PageType.PERSONAL_BASE, metadata
 
         # 12. Check for Character Dialogue (角色對話，右上角帶略過)

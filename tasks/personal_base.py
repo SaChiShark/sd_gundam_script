@@ -175,7 +175,7 @@ class PersonalBaseRequestTask(BaseTask):
             req_type = CharacterRequestType.DEVELOP_UNIT
         elif any(kw in task_desc for kw in ["強化部隊", "強化"]):
             req_type = CharacterRequestType.ENHANCE_UNIT
-        elif any(kw in task_desc for kw in ["請求出擊", "出擊", "擊破", "完成關卡"]):
+        elif any(kw in task_desc for kw in ["請求出擊", "出擊", "擊破", "擎破", "完成關卡", "架單位"]):
             req_type = CharacterRequestType.CLEAR_STAGE
         else:
             req_type = CharacterRequestType.UNKNOWN
