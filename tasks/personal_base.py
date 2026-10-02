@@ -77,6 +77,7 @@ class PersonalBaseRequestTask(BaseTask):
     ):
         super().__init__(device, vision, fsm)
         self.ocr = RapidOCR()
+        self.page_manager = self.fsm.page_manager if self.fsm else PageManager(self.device, self.vision)
         os.makedirs(self.UNKNOWN_TASK_DIR, exist_ok=True)
 
     def _dismiss_any_popup(self) -> bool:
@@ -158,10 +159,13 @@ class PersonalBaseRequestTask(BaseTask):
                 elif "挑戰" in text:
                     button_type = "challenge"
                     break
+                elif "交付" in text:
+                    button_type = "deliver"
+                    break
 
         # Classify Request Type based strictly on task title and requirement text
         task_desc = f"{title} {requirement_text}"
-        if any(kw in task_desc for kw in ["交付機體", "交出"]):
+        if any(kw in task_desc for kw in ["交付機體", "交出", "調度資金", "CAPITAL"]):
             req_type = CharacterRequestType.DELIVER_UNIT
         elif any(kw in task_desc for kw in ["奪取", "捕獲"]):
             req_type = CharacterRequestType.CAPTURE_UNIT
@@ -171,7 +175,7 @@ class PersonalBaseRequestTask(BaseTask):
             req_type = CharacterRequestType.DEVELOP_UNIT
         elif any(kw in task_desc for kw in ["強化部隊", "強化"]):
             req_type = CharacterRequestType.ENHANCE_UNIT
-        elif any(kw in task_desc for kw in ["請求出擊", "出擊"]):
+        elif any(kw in task_desc for kw in ["請求出擊", "出擊", "擊破", "完成關卡"]):
             req_type = CharacterRequestType.CLEAR_STAGE
         else:
             req_type = CharacterRequestType.UNKNOWN
@@ -225,31 +229,91 @@ class PersonalBaseRequestTask(BaseTask):
         )
 
     def _claim_report(self) -> bool:
-        """Claim completed character request reward and dismiss dialogues/modals."""
+        """Claim completed character request reward and dismiss dialogues/modals via StateMachine & PageManager."""
         logger.info("[CharacterRequest] Claiming '報告' reward...")
-        frame = self.device.screencap()
-        report_match = self.vision.match_template(frame, "assets/buttons/btn_report_orange.png", threshold=0.80)
-        if report_match:
-            self.device.tap_rect(report_match.rect)
-        else:
-            self.device.tap(1623, 858)
-        self.device.random_sleep(2.5, 3.0)
+        if self.fsm:
+            return self.fsm.claim_character_request_report()
 
-        # Skip dialogue
-        logger.info("[CharacterRequest] Skipping completion dialogue at (1760, 60)...")
-        self.device.tap(1760, 60)
-        self.device.random_sleep(2.0, 2.5)
+        self.device.tap(1623, 858)
+        self.device.random_sleep(2.5, 3.5)
 
-        # Dismiss '回報完成' screen (tap center)
-        logger.info("[CharacterRequest] Dismissing '回報完成' screen...")
-        self.device.tap(960, 500)
-        self.device.random_sleep(2.0, 2.5)
-
-        # Dismiss '領取結果' modal (tap OK)
-        logger.info("[CharacterRequest] Dismissing '領取結果' modal...")
-        self.device.tap(962, 949)
-        self.device.random_sleep(1.5, 2.0)
+        for _ in range(5):
+            frame = self.device.screencap()
+            ptype, meta = self.page_manager.classify(frame)
+            if ptype == PageType.DIALOGUE:
+                self.page_manager.handle_dialogue(frame, meta)
+            elif ptype == PageType.ITEM_ACQUIRED:
+                self.page_manager.handle_item_acquired(frame, meta)
+                return True
+            elif ptype == PageType.CHARACTER_REQUESTS:
+                return True
+            else:
+                self.device.tap(960, 540)
+                self.device.random_sleep(1.5, 2.0)
         return True
+
+    def solve_deliver_unit(self, slot_idx: int, detail: CharacterRequestDetail) -> bool:
+        """Solve Deliver Unit / Capital Request."""
+        logger.info(f"[Slot {slot_idx}] Solving DELIVER request: '{detail.title}'...")
+        if detail.button_type == "report":
+            return self._claim_report()
+
+        if detail.button_type == "accept":
+            if self.fsm:
+                self.fsm.accept_current_character_request()
+            else:
+                self.device.tap(1623, 800)
+                self.device.random_sleep(2.0, 3.0)
+
+        # In detail view, button is now '交付' at (1623, 800)
+        logger.info(f"[Slot {slot_idx}] Tapping 交付 button at (1623, 800)...")
+        self.device.tap(1623, 800)
+        self.device.random_sleep(2.0, 3.0)
+
+        frame = self.device.screencap()
+        ptype, meta = self.page_manager.classify(frame)
+
+        # Check if Capital Delivery (confirmation modal directly appears)
+        if ptype == PageType.MODAL_CONFIRM or "CAPITAL" in detail.requirement_text:
+            logger.info(f"[Slot {slot_idx}] Capital delivery confirm modal detected. Confirming...")
+            self.page_manager.handle_modal_confirm(frame, meta)
+            if self.fsm:
+                self.fsm._resolve_completion_sequence()
+            return True
+
+        # Mobile suit delivery modal
+        if self.fsm:
+            self.fsm.deliver_unit_in_modal()
+        return True
+
+    def solve_develop_unit(self, slot_idx: int, detail: CharacterRequestDetail, times: int = 3) -> bool:
+        """Solve Unit Development Request via Development Tree."""
+        logger.info(f"[Slot {slot_idx}] Solving DEVELOP request: '{detail.title}'...")
+        if detail.button_type == "report":
+            return self._claim_report()
+
+        if detail.button_type == "accept":
+            if self.fsm:
+                self.fsm.accept_current_character_request()
+            else:
+                self.device.tap(1623, 800)
+                self.device.random_sleep(2.0, 3.0)
+
+        # Tap '挑戰' to jump directly into Development Tree
+        logger.info(f"[Slot {slot_idx}] Tapping 挑戰 button to jump to development tree...")
+        if self.fsm:
+            self.fsm.challenge_current_character_request()
+        else:
+            self.device.tap(1623, 800)
+            self.device.random_sleep(2.5, 3.5)
+
+        # Execute development on tree
+        if self.fsm:
+            self.fsm.develop_unit_on_tree(times=times)
+
+        # Now back at detail view, button should be '報告'
+        logger.info(f"[Slot {slot_idx}] Claiming completed report...")
+        return self._claim_report()
 
     def process_single_slot(self, slot_idx: int, max_abandons: int = 5) -> bool:
         """
@@ -303,18 +367,17 @@ class PersonalBaseRequestTask(BaseTask):
                 logger.info(f"[Slot {slot_idx}] Task is EVENT STAGE. Skipping per user instruction (manual handling).")
                 return True
 
-            # 5. State: DEVELOP_UNIT
+            # 5. State: DELIVER_UNIT
+            if detail.request_type == CharacterRequestType.DELIVER_UNIT:
+                logger.info(f"[Slot {slot_idx}] Dispatching to DELIVER_UNIT solver...")
+                return self.solve_deliver_unit(slot_idx, detail)
+
+            # 6. State: DEVELOP_UNIT
             if detail.request_type == CharacterRequestType.DEVELOP_UNIT:
                 logger.info(f"[Slot {slot_idx}] Dispatching to DEVELOP_UNIT solver...")
-                if detail.button_type == "accept":
-                    if self.fsm:
-                        self.fsm.accept_current_character_request()
-                    else:
-                        self.device.tap(1623, 800)
-                        self.device.random_sleep(1.5, 2.0)
-                return True
+                return self.solve_develop_unit(slot_idx, detail)
 
-            # 6. State: ENHANCE_UNIT
+            # 7. State: ENHANCE_UNIT
             if detail.request_type == CharacterRequestType.ENHANCE_UNIT:
                 logger.info(f"[Slot {slot_idx}] Dispatching to ENHANCE_UNIT solver...")
                 if detail.button_type == "accept":
@@ -322,7 +385,7 @@ class PersonalBaseRequestTask(BaseTask):
                         self.fsm.accept_current_character_request()
                 return True
 
-            # 7. State: CLEAR_STAGE
+            # 8. State: CLEAR_STAGE
             if detail.request_type == CharacterRequestType.CLEAR_STAGE:
                 logger.info(f"[Slot {slot_idx}] Dispatching to CLEAR_STAGE solver...")
                 if detail.button_type == "accept":
@@ -330,7 +393,7 @@ class PersonalBaseRequestTask(BaseTask):
                         self.fsm.accept_current_character_request()
                 return True
 
-            # 8. State: UNKNOWN -> SAFETY GUARDRAIL
+            # 9. State: UNKNOWN -> SAFETY GUARDRAIL
             if detail.request_type == CharacterRequestType.UNKNOWN:
                 logger.error(f"[Slot {slot_idx}] Unknown character request encountered! Triggering safety guardrail.")
                 self.handle_unknown_task(frame, detail)
@@ -345,6 +408,19 @@ class PersonalBaseRequestTask(BaseTask):
             else:
                 self.device.tap(sx, sy)
                 self.device.random_sleep(2.0, 2.5)
+
+            # Check if this slot is empty / in cooldown (距離更新還有X小時)
+            frame = self.device.screencap()
+            ocr_items = self.page_manager._extract_all_text(frame)
+            combined_text = " ".join([t[0] for t in ocr_items])
+            if "距離更新" in combined_text or ("還有" in combined_text and "小時" in combined_text):
+                logger.info(f"[Slot {slot_idx}] Slot is empty/in cooldown. Returning to overview...")
+                if self.fsm:
+                    self.fsm.go_back()
+                else:
+                    self.device.tap(65, 55)
+                    self.device.random_sleep(1.5, 2.0)
+                continue
 
             # Run single task state machine for this slot
             self.process_single_slot(slot_idx)
@@ -362,8 +438,13 @@ class PersonalBaseRequestTask(BaseTask):
         logger.info("Checking weekly reward milestone progress...")
         for mx, my in self.WEEKLY_REWARD_COORDINATES:
             self.device.tap(mx, my)
-            self.device.random_sleep(0.8, 1.2)
-            self._dismiss_any_popup()
+            self.device.random_sleep(1.0, 1.5)
+            frame = self.device.screencap()
+            ptype, meta = self.page_manager.classify(frame)
+            if ptype == PageType.ITEM_ACQUIRED:
+                self.page_manager.handle_item_acquired(frame, meta)
+            else:
+                self._dismiss_any_popup()
 
     def run(self) -> bool:
         """Execute the complete Personal Base character requests workflow."""

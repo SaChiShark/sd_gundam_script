@@ -58,7 +58,20 @@ class NavigationCoords:
     # Character Requests Detail Action Buttons
     CHAR_REQ_TRASH_CAN: Tuple[int, int] = (1752, 182)
     CHAR_REQ_ACCEPT_BUTTON: Tuple[int, int] = (1623, 800)
+    CHAR_REQ_CHALLENGE_BUTTON: Tuple[int, int] = (1623, 800)
+    CHAR_REQ_DELIVER_BUTTON: Tuple[int, int] = (1623, 800)
+    CHAR_REQ_REPORT_BUTTON: Tuple[int, int] = (1623, 858)
     CHAR_REQ_DIALOG_SKIP: Tuple[int, int] = (1850, 60)
+
+    # Unit Delivery Modal Touch Targets
+    DELIVER_MODAL_FIRST_UNIT: Tuple[int, int] = (580, 560)
+    DELIVER_MODAL_CONFIRM_BTN: Tuple[int, int] = (1160, 955)
+
+    # Development Tree Touch Targets (Verified Calibrated)
+    DEVELOP_TREE_R_UNIT: Tuple[int, int] = (815, 485)
+    DEVELOP_MODAL_EXECUTE_BTN: Tuple[int, int] = (1148, 996)
+    DEVELOP_CONFIRM_EXECUTE_BTN: Tuple[int, int] = (1148, 996)
+    DEVELOP_TAP_TO_NEXT: Tuple[int, int] = (965, 1026)
 
 
 class HomeAnchorROI:
@@ -315,5 +328,89 @@ class StateMachine:
         logger.info(f"[StateMachine] Skipping dialogue at {NavigationCoords.CHAR_REQ_DIALOG_SKIP}...")
         self.device.tap(NavigationCoords.CHAR_REQ_DIALOG_SKIP[0], NavigationCoords.CHAR_REQ_DIALOG_SKIP[1])
         self.device.random_sleep(1.5, 2.0)
+        return True
+
+    def challenge_current_character_request(self) -> bool:
+        """Tap '挑戰' on the accepted character request to jump directly to its target activity."""
+        logger.info(f"[StateMachine] Tapping 挑戰 button at {NavigationCoords.CHAR_REQ_CHALLENGE_BUTTON}...")
+        self.device.tap(NavigationCoords.CHAR_REQ_CHALLENGE_BUTTON[0], NavigationCoords.CHAR_REQ_CHALLENGE_BUTTON[1])
+        self.device.random_sleep(2.5, 3.5)
+        return True
+
+    def develop_unit_on_tree(self, times: int = 3) -> bool:
+        """
+        Execute unit development directly on the Development Tree screen (開發路線圖).
+        Develops the R-tier unit at calibrated coords repeatedly, confirming modals and dismissing results.
+        Finally returns back to the previous screen via top-left back button.
+        """
+        logger.info(f"[StateMachine] Executing unit development on tree ({times} times)...")
+        for i in range(1, times + 1):
+            logger.info(f"[StateMachine] Development cycle [{i}/{times}]...")
+            # 1. Tap unit node on tree
+            self.device.tap(*NavigationCoords.DEVELOP_TREE_R_UNIT)
+            self.device.random_sleep(1.5, 2.0)
+
+            # 2. Tap '執行開發' in unit detail modal
+            self.device.tap(*NavigationCoords.DEVELOP_MODAL_EXECUTE_BTN)
+            self.device.random_sleep(1.5, 2.0)
+
+            # 3. Tap '執行' in confirmation popup
+            self.device.tap(*NavigationCoords.DEVELOP_CONFIRM_EXECUTE_BTN)
+            self.device.random_sleep(3.0, 4.0)
+
+            # 4. Tap 'TAP TO NEXT' on production animation screen
+            self.device.tap(*NavigationCoords.DEVELOP_TAP_TO_NEXT)
+            self.device.random_sleep(1.8, 2.5)
+
+        # 5. Return to character request detail view via top-left back button
+        logger.info(f"[StateMachine] Completed {times} developments. Returning via back button...")
+        self.device.tap(*NavigationCoords.BACK_BUTTON)
+        self.device.random_sleep(2.0, 3.0)
+        return True
+
+    def deliver_unit_in_modal(self) -> bool:
+        """
+        In the '確認交付' modal, select the first available unlocked unit and confirm delivery.
+        Resolves dialogue and claims reward via PageManager.
+        """
+        logger.info(f"[StateMachine] Selecting unit at {NavigationCoords.DELIVER_MODAL_FIRST_UNIT}...")
+        self.device.tap(*NavigationCoords.DELIVER_MODAL_FIRST_UNIT)
+        self.device.random_sleep(1.2, 1.8)
+
+        logger.info(f"[StateMachine] Tapping 交付 submit button at {NavigationCoords.DELIVER_MODAL_CONFIRM_BTN}...")
+        self.device.tap(*NavigationCoords.DELIVER_MODAL_CONFIRM_BTN)
+        self.device.random_sleep(2.5, 3.5)
+
+        self._resolve_completion_sequence()
+        return True
+
+    def claim_character_request_report(self) -> bool:
+        """
+        Tap '報告' button on completed character request, then resolve dialogue and reward popup.
+        """
+        logger.info(f"[StateMachine] Tapping 報告 button at {NavigationCoords.CHAR_REQ_REPORT_BUTTON}...")
+        self.device.tap(*NavigationCoords.CHAR_REQ_REPORT_BUTTON)
+        self.device.random_sleep(2.5, 3.5)
+
+        self._resolve_completion_sequence()
+        return True
+
+    def _resolve_completion_sequence(self, max_steps: int = 5) -> bool:
+        """Handle dialogue, rank animation, and reward claim modals using PageManager."""
+        for step in range(1, max_steps + 1):
+            frame = self.device.screencap()
+            page_type, meta = self.page_manager.classify(frame)
+            logger.info(f"[StateMachine] Completion sequence step {step}: page is [{page_type.value}]")
+
+            if page_type == PageType.DIALOGUE:
+                self.page_manager.handle_dialogue(frame, meta)
+            elif page_type == PageType.ITEM_ACQUIRED:
+                self.page_manager.handle_item_acquired(frame, meta)
+                return True
+            elif page_type == PageType.CHARACTER_REQUESTS:
+                return True
+            else:
+                self.device.tap(960, 540)
+                self.device.random_sleep(1.5, 2.0)
         return True
 
