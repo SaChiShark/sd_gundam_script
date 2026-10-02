@@ -48,24 +48,40 @@ names:
     logger.info(f"[DatasetBuilder] Created config at: {data_yaml_path}")
 
 
-def populate_raw_samples(max_samples: int = 50) -> int:
+def populate_raw_samples(max_samples: int = 250) -> int:
     """Collect unique screenshots from captures/ into raw labeling directory."""
     raw_dir = os.path.join(DATASET_DIR, "raw_to_label")
     os.makedirs(raw_dir, exist_ok=True)
 
-    collected = 0
+    # Prioritize UI interaction captures
+    priority_keywords = [
+        "req", "accept", "report", "dev", "modal", "slot", "confirm",
+        "trash", "deliver", "cancel", "tree", "dialogue", "after_"
+    ]
+
+    all_files = []
     for root, _, files in os.walk(CAPTURES_DIR):
         for f in files:
             if f.lower().endswith((".png", ".jpg")):
-                src = os.path.join(root, f)
-                dst = os.path.join(raw_dir, f"sample_{collected:03d}_{f}")
-                if not os.path.exists(dst):
-                    shutil.copy2(src, dst)
-                    collected += 1
-                    if collected >= max_samples:
-                        break
-        if collected >= max_samples:
-            break
+                all_files.append(os.path.join(root, f))
+
+    # Sort so priority images come first
+    def priority_score(path: str) -> int:
+        name = os.path.basename(path).lower()
+        score = sum(1 for kw in priority_keywords if kw in name)
+        return score
+
+    all_files.sort(key=priority_score, reverse=True)
+
+    collected = 0
+    for src in all_files:
+        name = os.path.basename(src)
+        dst = os.path.join(raw_dir, f"sample_{collected:03d}_{name}")
+        if not os.path.exists(dst):
+            shutil.copy2(src, dst)
+            collected += 1
+            if collected >= max_samples:
+                break
 
     logger.success(f"[DatasetBuilder] Collected {collected} candidate screenshots to: {raw_dir}")
     return collected
@@ -73,4 +89,4 @@ def populate_raw_samples(max_samples: int = 50) -> int:
 
 if __name__ == "__main__":
     scaffold_dataset_structure()
-    populate_raw_samples()
+    populate_raw_samples(max_samples=250)

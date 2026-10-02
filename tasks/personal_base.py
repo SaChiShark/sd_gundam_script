@@ -265,10 +265,18 @@ class PersonalBaseRequestTask(BaseTask):
                 self.device.tap(1623, 800)
                 self.device.random_sleep(2.0, 3.0)
 
-        # In detail view, button is now '交付' at (1623, 800)
-        logger.info(f"[Slot {slot_idx}] Tapping 交付 button at (1623, 800)...")
-        self.device.tap(1623, 800)
-        self.device.random_sleep(2.0, 3.0)
+        # In detail view, button is now '交付'
+        logger.info(f"[Slot {slot_idx}] Tapping 交付 button...")
+        if self.fsm:
+            self.fsm.locate_and_tap_target(
+                target_class="btn_deliver",
+                fallback_anchor=(1623, 800),
+                action_name="tap_detail_deliver_btn",
+                timeout=2.5
+            )
+        else:
+            self.device.tap(1623, 800)
+            self.device.random_sleep(2.0, 3.0)
 
         frame = self.device.screencap()
         ptype, meta = self.page_manager.classify(frame)

@@ -1,5 +1,7 @@
-"""Finite State Machine and Navigation Engine for SD Gundam."""
+import os
+import random
 import time
+from datetime import datetime
 from enum import Enum, auto
 from typing import Dict, List, Optional, Tuple
 
@@ -9,6 +11,7 @@ from loguru import logger
 
 from core.device import Device
 from core.vision import Vision, MatchResult
+from tools.yolo_detector import YOLOUIDetector, UIElement
 
 
 class GameState(Enum):
@@ -95,11 +98,146 @@ from core.page_manager import PageManager, PageType
 class StateMachine:
     """Tracks game UI state and orchestrates autonomous navigation."""
 
-    def __init__(self, device: Device, vision: Optional[Vision] = None):
+    def __init__(
+        self,
+        device: Device,
+        vision: Optional[Vision] = None,
+        detector: Optional[YOLOUIDetector] = None,
+    ):
         self.device = device
         self.vision = vision or Vision()
         self.page_manager = PageManager(self.device, self.vision)
         self.current_state = GameState.UNKNOWN
+        self.detector = detector if detector is not None else YOLOUIDetector()
+        os.makedirs("captures/exceptions", exist_ok=True)
+
+    def trigger_exception_guardrail(
+        self,
+        frame: np.ndarray,
+        reason: str,
+        action_name: str = ""
+    ) -> None:
+        """
+        AGENTS.md Mandatory Rule 4 & 5: Exception Safety Guardrail.
+        Saves screenshot to captures/exceptions/, logs critical alert, and halts without blind tapping.
+        """
+        os.makedirs("captures/exceptions", exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_action = action_name.replace(" ", "_") if action_name else "unknown"
+        img_path = os.path.join("captures/exceptions", f"exception_{timestamp}_{safe_action}.png")
+        cv2.imwrite(img_path, frame)
+
+        logger.critical(
+            f"\n{'='*80}\n"
+            f"🛑 [AGENTS.md 例外安全防護 Guardrail] 操作例外中斷！\n"
+            f"- 操作動作: {action_name}\n"
+            f"- 原因說明: {reason}\n"
+            f"- 截圖存檔: {img_path}\n"
+            f"👉 依據規範已安全停止，嚴禁盲點或猜測。請向使用者或 Agent 報告請示！\n"
+            f"{'='*80}\n"
+        )
+
+    def tap_and_wait_transition(
+        self,
+        target_coords: Tuple[int, int],
+        expected_page: Optional[PageType] = None,
+        timeout: float = 4.0,
+        action_name: str = "",
+        jitter: int = 5,
+    ) -> bool:
+        """
+        Closed-loop, anti-detection tap with semantic state-transition verification.
+
+        1. Jitters coordinates within [-jitter, +jitter] for anti-detection.
+        2. Taps target coordinates.
+        3. Polls PageManager.classify() to detect expected page or state transition.
+        4. Halts and captures to captures/exceptions/ if transition fails (no blind looping).
+        """
+        tx = target_coords[0] + random.randint(-jitter, jitter)
+        ty = target_coords[1] + random.randint(-jitter, jitter)
+        logger.info(f"[StateMachine] Tapping '{action_name or 'target'}' at ({tx}, {ty}) [jitter={jitter}]...")
+        self.device.tap(tx, ty)
+
+        if expected_page is None:
+            self.device.random_sleep(1.0, 1.5)
+            return True
+
+        start_time = time.time()
+        self.device.random_sleep(0.8, 1.2)
+        while time.time() - start_time < timeout:
+            frame = self.device.screencap()
+            current_page, _ = self.page_manager.classify(frame)
+            if current_page == expected_page:
+                logger.success(f"[StateMachine] Verified transition to {expected_page.name} after '{action_name}'.")
+                return True
+            time.sleep(0.5)
+
+        # Transition failed: trigger exception guardrail
+        frame = self.device.screencap()
+        self.trigger_exception_guardrail(
+            frame,
+            reason=f"Timed out waiting {timeout}s for expected page {expected_page.name}",
+            action_name=action_name
+        )
+        return False
+
+    def locate_and_tap_target(
+        self,
+        target_class: str,
+        fallback_anchor: Optional[Tuple[int, int]] = None,
+        expected_page: Optional[PageType] = None,
+        roi: Optional[Tuple[int, int, int, int]] = None,
+        conf: float = 0.55,
+        action_name: str = "",
+        timeout: float = 4.0,
+    ) -> bool:
+        """
+        Three-tier deterministic UI interaction pipeline:
+        Level 1: Local YOLO detection on NVIDIA RTX 4070 SUPER GPU (DirectML).
+        Level 2: Calibrated fallback anchor or OCR semantic match if YOLO has no detection.
+        Level 3: If neither succeeds, trigger Exception Guardrail:
+                 - Save screenshot to captures/exceptions/
+                 - Log critical error
+                 - Halt safely and request manual agent/user intervention (Zero blind taps).
+        """
+        frame = self.device.screencap()
+        tap_coords: Optional[Tuple[int, int]] = None
+
+        # Level 1: GPU YOLO detection
+        if self.detector and self.detector.is_ready():
+            elem = self.detector.find_target(frame, target_class=target_class, roi=roi, conf=conf)
+            if elem is not None:
+                tap_coords = elem.center
+                logger.info(
+                    f"[Level 1 - YOLO] Detected '{target_class}' at {tap_coords} "
+                    f"with confidence {elem.confidence:.3f} (bbox={elem.bbox})"
+                )
+
+        # Level 2: Calibrated anchor fallback
+        if tap_coords is None:
+            if fallback_anchor is not None:
+                tap_coords = fallback_anchor
+                logger.warning(
+                    f"[Level 2 - Fallback] YOLO did not detect '{target_class}' (conf >= {conf}). "
+                    f"Falling back to calibrated anchor {fallback_anchor}."
+                )
+
+        # Level 3: Exception Guardrail
+        if tap_coords is None:
+            self.trigger_exception_guardrail(
+                frame,
+                reason=f"Target '{target_class}' could not be located via YOLO or fallback anchor.",
+                action_name=action_name or target_class
+            )
+            return False
+
+        # Execute closed-loop tap
+        return self.tap_and_wait_transition(
+            target_coords=tap_coords,
+            expected_page=expected_page,
+            timeout=timeout,
+            action_name=action_name or target_class
+        )
 
     def _crop_roi(self, frame: np.ndarray, roi: Tuple[int, int, int, int]) -> np.ndarray:
         """Extract a bounding box region from the frame for fast targeted matching."""
@@ -302,9 +440,15 @@ class StateMachine:
         Abandon the currently viewed character request by tapping the trash can,
         resolving the confirmation popup via PageManager, and waiting for the new task to appear.
         """
-        logger.info(f"[StateMachine] Abandoning character request via trash can at {NavigationCoords.CHAR_REQ_TRASH_CAN}...")
-        self.device.tap(NavigationCoords.CHAR_REQ_TRASH_CAN[0], NavigationCoords.CHAR_REQ_TRASH_CAN[1])
-        self.device.random_sleep(1.5, 2.0)
+        logger.info("[StateMachine] Abandoning character request via trash can...")
+        success = self.locate_and_tap_target(
+            target_class="btn_trash",
+            fallback_anchor=NavigationCoords.CHAR_REQ_TRASH_CAN,
+            action_name="abandon_trash_can",
+            timeout=2.0
+        )
+        if not success:
+            return False
 
         # Confirm abandonment modal
         frame = self.device.screencap()
@@ -320,22 +464,38 @@ class StateMachine:
         """
         Accept the currently viewed character request and skip any resulting dialogue.
         """
-        logger.info(f"[StateMachine] Accepting character request at {NavigationCoords.CHAR_REQ_ACCEPT_BUTTON}...")
-        self.device.tap(NavigationCoords.CHAR_REQ_ACCEPT_BUTTON[0], NavigationCoords.CHAR_REQ_ACCEPT_BUTTON[1])
-        self.device.random_sleep(2.0, 3.0)
+        logger.info("[StateMachine] Accepting character request...")
+        success = self.locate_and_tap_target(
+            target_class="btn_accept",
+            fallback_anchor=NavigationCoords.CHAR_REQ_ACCEPT_BUTTON,
+            action_name="accept_character_request",
+            timeout=3.0
+        )
+        if not success:
+            return False
 
         # Skip dialogue if present
-        logger.info(f"[StateMachine] Skipping dialogue at {NavigationCoords.CHAR_REQ_DIALOG_SKIP}...")
-        self.device.tap(NavigationCoords.CHAR_REQ_DIALOG_SKIP[0], NavigationCoords.CHAR_REQ_DIALOG_SKIP[1])
-        self.device.random_sleep(1.5, 2.0)
+        frame = self.device.screencap()
+        ptype, _ = self.page_manager.classify(frame)
+        if ptype == PageType.DIALOGUE or (self.detector and self.detector.find_target(frame, "btn_skip")):
+            logger.info("[StateMachine] Skipping dialogue...")
+            self.locate_and_tap_target(
+                target_class="btn_skip",
+                fallback_anchor=NavigationCoords.CHAR_REQ_DIALOG_SKIP,
+                action_name="skip_dialogue",
+                timeout=2.0
+            )
         return True
 
     def challenge_current_character_request(self) -> bool:
         """Tap '挑戰' on the accepted character request to jump directly to its target activity."""
-        logger.info(f"[StateMachine] Tapping 挑戰 button at {NavigationCoords.CHAR_REQ_CHALLENGE_BUTTON}...")
-        self.device.tap(NavigationCoords.CHAR_REQ_CHALLENGE_BUTTON[0], NavigationCoords.CHAR_REQ_CHALLENGE_BUTTON[1])
-        self.device.random_sleep(2.5, 3.5)
-        return True
+        logger.info("[StateMachine] Tapping 挑戰 button...")
+        return self.locate_and_tap_target(
+            target_class="btn_challenge",
+            fallback_anchor=NavigationCoords.CHAR_REQ_CHALLENGE_BUTTON,
+            action_name="challenge_character_request",
+            timeout=3.0
+        )
 
     def develop_unit_on_tree(self, times: int = 3) -> bool:
         """
@@ -347,16 +507,28 @@ class StateMachine:
         for i in range(1, times + 1):
             logger.info(f"[StateMachine] Development cycle [{i}/{times}]...")
             # 1. Tap unit node on tree
-            self.device.tap(*NavigationCoords.DEVELOP_TREE_R_UNIT)
-            self.device.random_sleep(1.5, 2.0)
+            self.locate_and_tap_target(
+                target_class="unit_r",
+                fallback_anchor=NavigationCoords.DEVELOP_TREE_R_UNIT,
+                action_name="tap_unit_node_tree",
+                timeout=2.0
+            )
 
             # 2. Tap '執行開發' in unit detail modal
-            self.device.tap(*NavigationCoords.DEVELOP_MODAL_EXECUTE_BTN)
-            self.device.random_sleep(1.5, 2.0)
+            self.locate_and_tap_target(
+                target_class="btn_confirm",
+                fallback_anchor=NavigationCoords.DEVELOP_MODAL_EXECUTE_BTN,
+                action_name="tap_dev_modal_execute",
+                timeout=2.0
+            )
 
             # 3. Tap '執行' in confirmation popup
-            self.device.tap(*NavigationCoords.DEVELOP_CONFIRM_EXECUTE_BTN)
-            self.device.random_sleep(3.0, 4.0)
+            self.locate_and_tap_target(
+                target_class="btn_confirm",
+                fallback_anchor=NavigationCoords.DEVELOP_CONFIRM_EXECUTE_BTN,
+                action_name="tap_confirm_execute",
+                timeout=3.5
+            )
 
             # 4. Tap 'TAP TO NEXT' on production animation screen
             self.device.tap(*NavigationCoords.DEVELOP_TAP_TO_NEXT)
@@ -377,9 +549,13 @@ class StateMachine:
         self.device.tap(*NavigationCoords.DELIVER_MODAL_FIRST_UNIT)
         self.device.random_sleep(1.2, 1.8)
 
-        logger.info(f"[StateMachine] Tapping 交付 submit button at {NavigationCoords.DELIVER_MODAL_CONFIRM_BTN}...")
-        self.device.tap(*NavigationCoords.DELIVER_MODAL_CONFIRM_BTN)
-        self.device.random_sleep(2.5, 3.5)
+        logger.info("[StateMachine] Tapping 交付 submit button...")
+        self.locate_and_tap_target(
+            target_class="btn_deliver",
+            fallback_anchor=NavigationCoords.DELIVER_MODAL_CONFIRM_BTN,
+            action_name="confirm_deliver_unit",
+            timeout=3.0
+        )
 
         self._resolve_completion_sequence()
         return True
@@ -388,9 +564,15 @@ class StateMachine:
         """
         Tap '報告' button on completed character request, then resolve dialogue and reward popup.
         """
-        logger.info(f"[StateMachine] Tapping 報告 button at {NavigationCoords.CHAR_REQ_REPORT_BUTTON}...")
-        self.device.tap(*NavigationCoords.CHAR_REQ_REPORT_BUTTON)
-        self.device.random_sleep(2.5, 3.5)
+        logger.info("[StateMachine] Tapping 報告 button...")
+        success = self.locate_and_tap_target(
+            target_class="btn_report",
+            fallback_anchor=NavigationCoords.CHAR_REQ_REPORT_BUTTON,
+            action_name="claim_report_button",
+            timeout=3.0
+        )
+        if not success:
+            return False
 
         self._resolve_completion_sequence()
         return True
