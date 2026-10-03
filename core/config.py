@@ -15,6 +15,9 @@ class DeviceConfig(BaseModel):
         description="Path to ADB executable"
     )
     screencap_timeout: float = Field(default=5.0, description="Screenshot timeout in seconds")
+    debug_mode: bool = Field(default=False, description="Enable tap visualization screenshot on every click")
+    step_by_step: bool = Field(default=False, description="Enable step-by-step interactive confirmation before each tap")
+    debug_dir: str = Field(default="captures/debug_taps", description="Directory to save tap screenshots")
 
 
 class VisionConfig(BaseModel):

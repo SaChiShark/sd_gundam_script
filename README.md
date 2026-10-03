@@ -62,18 +62,25 @@
 
 ## 🚀 快速開始
 
-### 1. 建立虛擬環境與安裝依賴
+### 1. 啟用 Conda 專屬環境與安裝依賴
+
+本專案指定使用專屬 Conda 環境 **`sd_gundam`**（Python 3.12），嚴禁使用 `base` 環境：
 
 ```bash
-# 建立 Python 3.10+ 虛擬環境
-python -m venv venv
+# 1. 啟用專屬 Conda 環境
+conda activate sd_gundam
 
-# 啟動虛擬環境 (Windows PowerShell)
-.\venv\Scripts\Activate.ps1
+# 若為首次建立：
+# conda create -n sd_gundam python=3.12 -y
+# conda activate sd_gundam
 
-# 安裝相依套件
+# 2. 安裝相依套件與 GPU DirectML 支援
 pip install -r requirements.txt
+pip uninstall -y onnxruntime
+pip install onnxruntime-directml
 ```
+直譯器路徑：`C:\Users\sharkMeow\miniconda3\envs\sd_gundam\python.exe`
+
 
 ### 2. 檢測模擬器連線
 
@@ -93,12 +100,16 @@ python tools/inspector.py
 
 ---
 
-## 📋 日常任務模組規劃
-
-- [ ] `daily_login`: 登入獎勵領取與全域彈窗清理
+## 📋 日常任務模組進度
+ 
+- [x] `daily_login`: 啟動遊戲、健康警語推進、更新下載標準化確認、登入簽到、公告關閉與收斂至主頁 (`scripts/step1_launch_to_home.py`)
+- [x] `warship_cruise`: 戰艦巡航遠征獎勵回收，具備多模態嚴格驗證（RGB像素+OCR+狀態轉移+AP數值比對） (`scripts/step2_warship_cruise.py`)
+- [x] `personal_base`: 個人基地角色委託，三槽位卡片掃描、SSR/SR/R 品階判定、最優委託選取與領取 (`scripts/step3_check_character_requests.py`)
+- [x] `daily_cultivation`: 每日強化培育關卡（資金、機體、角色、支援）最高難度 (LV6) 掃蕩模組 (`scripts/step4_daily_cultivation.py`)
+- [x] `yolo_ui_detector`: 基於 ONNX Runtime DirectML (RTX 4070 SUPER) 之次毫秒 UI 物件偵測引擎 (`models/yolo11n_ui.onnx`)
+- [x] `page_manager`: 全域集中化頁面分類器、標準化資源下載確認、彈窗與未知頁面安全阻斷
 - [ ] `mailbox`: 信箱體力與道具一鍵領取
 - [ ] `free_gacha`: 每日免費轉蛋與友情點數抽取
-- [ ] `resource_sweep`: 每日資金與素材關卡掃蕩
 - [ ] `daily_mission`: 每日任務成就完成進度與獎勵領取
 - [ ] `auto_scheduler`: 定時喚醒與體力溢出預警
 
@@ -109,23 +120,36 @@ python tools/inspector.py
 ```text
 sd_gundam_script/
 ├── .agents/skills/          # Antigravity 專案專用技能與操作手冊
-├── assets/                  # 視覺辨識資源庫
-│   ├── anchors/             # 介面識別特徵圖
-│   ├── buttons/             # 點擊按鈕模板圖
-│   └── icons/               # 道具與標籤圖示
+├── assets/                  # 視覺辨識資源庫 (anchors, buttons, icons)
 ├── core/                    # 自動化引擎核心
-│   ├── device.py            # ADB 連線、截圖與擬真觸控
-│   ├── vision.py            # OpenCV 模板匹配與 RapidOCR
-│   ├── state_machine.py     # 狀態機與畫面導航邏輯
-│   └── config.py            # 設定檔載入器
-├── tasks/                   # 具體任務實作
-│   └── base.py              # 任務抽象基類
-├── tools/                   # 開發與調試輔助工具
+│   ├── config.py            # 設定檔載入器
+│   ├── device.py            # ADB 連線、高速二進位截圖與擬真觸控
+│   ├── page_manager.py      # 全域頁面分類器與標準化彈窗處理器
+│   ├── state_machine.py     # 有限狀態機、多路徑導航圖與三錨點收斂
+│   └── vision.py            # OpenCV 模板匹配、RapidOCR 文字識別
+├── models/                  # 本地端訓練導出之 AI 模型權重
+│   └── yolo11n_ui.onnx      # DirectML GPU 加速 UI 物件偵測模型
+├── tasks/                   # 具體業務日常任務模組
+│   ├── base.py              # 任務抽象基類 (BaseTask)
+│   ├── daily_cultivation.py # 強化培育關卡掃蕩
+│   ├── daily_login.py       # 登入與啟動收斂
+│   ├── personal_base.py     # 個人基地角色要求委託
+│   └── warship_cruise.py    # 戰艦巡航遠征獎勵回收 (多模態驗證)
+├── scripts/                 # 單步調試與端到端執行指令碼
+│   ├── run_daily_flow.py    # 每日全流程一鍵執行
+│   ├── step1_launch_to_home.py
+│   ├── step2_warship_cruise.py
+│   ├── step3_check_character_requests.py
+│   └── step4_daily_cultivation.py
+├── tools/                   # 開發、審計與調試輔助工具
 │   ├── adb_finder.py        # 模擬器端口自動掃描工具
-│   └── inspector.py         # 畫面與座標採集工具
+│   ├── inspector.py         # 畫面與座標採集工具
+│   ├── locator.py           # 精準 UI 定位工具
+│   ├── scan_ssr_development.py # 機體開發樹 SSR 審計與技能書試算工具
+│   └── yolo_detector.py     # YOLO ONNX DirectML 推理引擎
 ├── docs/                    # 軟體工程架構與 commit 規範手冊
-├── tests/                   # 單元測試集
-├── AGENTS.md                # AI Agent 開發守則
+├── tests/                   # pytest 自動化單元測試套件
+├── AGENTS.md                # AI Agent 開發與行為守則 (強制規範)
 ├── CONTRIBUTING.md          # 貢獻與 Commit 指南
 ├── requirements.txt         # 依賴套件表
 └── README.md                # 專案首頁

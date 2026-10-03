@@ -63,6 +63,26 @@ class YOLOUIDetector:
         "unit_ssr",          # 11: 開發樹 / 列表 SSR 機體
         "badge_rarity",      # 12: 機體階級標籤
         "modal_card",        # 13: 浮動視窗主體
+        "badge_ssr",         # 14: 開發圖 SSR 徽章 (金色圓形)
+        "stars_3_purple",    # 15: 機體右下角 3 顆紫星星標記
+        "pill_owned",        # 16: 已持有數量標籤 (x1, x2 等)
+        "pill_unowned",      # 17: 未持有數量標籤 (x0)
+        "unit_pedestal",     # 18: 機體底座節點 (點擊目標)
+        "badge_sr",          # 19: 開發圖 SR 徽章 (銀紫/青色圓形)
+        "badge_r",           # 20: 開發圖 R 徽章 (銅棕色圓形)
+        "tab_route",         # 21: 左側一般路線分頁按鈕
+        "tab_ultimate",      # 22: 左側終極路線分頁按鈕 (【終極】/ ULT)
+        "btn_filter",        # 23: 篩選按鈕 (強化頁面等)
+        "btn_reset",         # 24: 篩選視窗重置按鈕
+        "input_search",      # 25: 搜尋欄位 / 按鈕
+        "card_unit",         # 26: 機體卡片本體 (強化列表)
+        "card_stars_3",      # 27: 強化卡片下方的藍紫3星
+        "card_stars_2",      # 28: 強化卡片下方的金2星
+        "card_stars_1",      # 29: 強化卡片下方的金1星
+        "btn_back",          # 30: 頂部返回箭頭按鈕
+        "btn_tap_to_next",   # 31: TAP TO NEXT 提示
+        "btn_sweep",         # 32: 關卡「掃蕩」按鈕
+        "btn_claim",         # 33: 獎勵/巡航「領取」按鈕
     ]
 
     def __init__(

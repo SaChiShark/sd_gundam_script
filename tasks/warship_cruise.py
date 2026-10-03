@@ -7,7 +7,7 @@ import numpy as np
 from loguru import logger
 
 from core.device import Device
-from core.state_machine import StateMachine
+from core.state_machine import StateMachine, NavigationCoords
 from core.vision import Vision
 from tasks.base import BaseTask
 
@@ -32,12 +32,12 @@ class WarshipCruiseTask(BaseTask):
     TPL_MODAL_OK: str = "assets/buttons/btn_warship_modal_ok.png"
 
     # Calibrated fallback coordinates (1920x1080)
-    COORD_NAV_BASE: Tuple[int, int] = (1240, 1035)
+    COORD_NAV_BASE: Tuple[int, int] = NavigationCoords.BOTTOM_NAV["personal_base"]
     COORD_CRUISE_BANNER: Tuple[int, int] = (160, 240)
-    COORD_COLLECT_ALL: Tuple[int, int] = (1600, 830)
-    COORD_MODAL_OK: Tuple[int, int] = (960, 990)
-    COORD_NAV_HOME: Tuple[int, int] = (100, 1030)
-    COORD_BACK_BTN: Tuple[int, int] = (65, 50)
+    COORD_COLLECT_ALL: Tuple[int, int] = (1676, 875)
+    COORD_MODAL_OK: Tuple[int, int] = (960, 940)
+    COORD_NAV_HOME: Tuple[int, int] = NavigationCoords.BOTTOM_NAV["home"]
+    COORD_BACK_BTN: Tuple[int, int] = NavigationCoords.BACK_BUTTON
 
     def __init__(
         self,
@@ -139,11 +139,22 @@ class WarshipCruiseTask(BaseTask):
     def is_collect_available(self, frame: np.ndarray) -> bool:
         """
         Check if the '全部回收' button is active and rewards are ready to collect.
-        Active button has bright blue color and high template match score (> 0.80).
-        Disabled button has dark color and template match score (~0.45).
+        Multi-modal verification:
+        1. Pixel color at button center (1676, 875): B > 180 and R < 100 (active bright blue).
+           When disabled, B is ~111.
+        2. RapidOCR detects '全部回收' on the right side of the screen.
         """
-        match = self.vision.match_template(frame, self.TPL_COLLECT_ALL, threshold=0.80)
-        return bool(match)
+        b = int(frame[875, 1676, 0])
+        r = int(frame[875, 1676, 2])
+        is_blue = (b > 180) and (r < 100)
+
+        if self.fsm and self.fsm.page_manager:
+            ocr_items = self.fsm.page_manager._extract_all_text(frame)
+            for text, center, _ in ocr_items:
+                if "全部回收" in text or ("回收" in text and center[0] > 1400 and center[1] > 800):
+                    return is_blue
+
+        return is_blue
 
     def _collect_rewards(self) -> bool:
         """Inspect and claim Warship Cruise rewards if available."""
@@ -156,19 +167,23 @@ class WarshipCruiseTask(BaseTask):
 
         if not self.is_collect_available(frame):
             logger.info("Warship Cruise rewards are not ready to collect (button disabled or already claimed).")
+            cv2.imwrite("captures/temp/warship_already_claimed.png", frame)
             return True
 
         logger.info("Rewards available! Tapping '全部回收'...")
-        if btn_match := self.vision.match_template(frame, self.TPL_COLLECT_ALL, threshold=0.80):
-            self.device.tap_rect(btn_match.rect)
-        else:
-            self.device.tap(self.COORD_COLLECT_ALL[0], self.COORD_COLLECT_ALL[1])
-
+        cv2.imwrite("captures/temp/warship_before_collect.png", frame)
+        self.device.tap(self.COORD_COLLECT_ALL[0], self.COORD_COLLECT_ALL[1])
         self.device.random_sleep(2.0, 3.0)
 
         # Confirm rewards dialog (回收道具)
         modal_frame = self.device.screencap()
-        if ok_match := self.vision.match_template(modal_frame, self.TPL_MODAL_OK, threshold=0.80):
+        cv2.imwrite("captures/temp/warship_reward_modal.png", modal_frame)
+        from core.page_manager import PageType
+        page_type, meta = self.fsm.page_manager.classify(modal_frame)
+        if page_type == PageType.ITEM_ACQUIRED:
+            logger.info("PageManager detected reward modal. Dismissing...")
+            self.fsm.page_manager.handle_item_acquired(modal_frame, meta)
+        elif ok_match := self.vision.match_template(modal_frame, self.TPL_MODAL_OK, threshold=0.75):
             logger.info(f"Matched 'OK' confirmation button at {ok_match.center}. Tapping...")
             self.device.tap_rect(ok_match.rect)
         else:
@@ -177,10 +192,11 @@ class WarshipCruiseTask(BaseTask):
 
         self.device.random_sleep(2.0, 2.5)
 
-        # Verify reward popup dismissed
+        # Verify reward popup dismissed & button now disabled
         after_frame = self.device.screencap()
-        if self.vision.match_template(after_frame, self.TPL_MODAL_OK, threshold=0.80):
-            logger.warning("Reward modal still present. Tapping OK again...")
+        cv2.imwrite("captures/temp/warship_after_collect.png", after_frame)
+        if self.is_collect_available(after_frame):
+            logger.warning("Button still active after collection. Retrying tap...")
             self.device.tap(self.COORD_MODAL_OK[0], self.COORD_MODAL_OK[1])
             self.device.random_sleep(1.5, 2.0)
 
@@ -190,6 +206,8 @@ class WarshipCruiseTask(BaseTask):
     def _return_to_home(self, max_attempts: int = 3) -> bool:
         """Safely navigate back to the main Home screen."""
         logger.info("Returning to Home screen (主畫面)...")
+        if self.fsm:
+            return self.fsm.navigate_to_home()
 
         for attempt in range(max_attempts):
             frame = self.device.screencap()
@@ -197,10 +215,8 @@ class WarshipCruiseTask(BaseTask):
                 logger.success("Already at Home screen.")
                 return True
 
-            # Dismiss any leftover modal
             self._dismiss_any_popup()
 
-            # Tap Home navigation button in bottom bar
             if nav_home := self.vision.match_template(frame, self.TPL_HOME_NAV, threshold=0.80):
                 logger.info(f"Matched nav_home at {nav_home.center}. Tapping...")
                 self.device.tap_rect(nav_home.rect)
@@ -215,7 +231,6 @@ class WarshipCruiseTask(BaseTask):
                 logger.success("Successfully returned to Home screen.")
                 return True
 
-            # If not yet at home, try tapping top-left back button
             logger.info(f"Tapping back button at {self.COORD_BACK_BTN}...")
             self.device.tap(self.COORD_BACK_BTN[0], self.COORD_BACK_BTN[1])
             self.device.random_sleep(1.5, 2.0)

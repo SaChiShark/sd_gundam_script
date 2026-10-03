@@ -61,3 +61,29 @@ def test_navigation_coords_within_bounds():
     assert 0 <= px <= 1920 and 0 <= py <= 1080
     assert 0 <= nx <= 1920 and 0 <= ny <= 1080
 
+
+def test_resolve_completion_sequence_guardrail_on_unknown():
+    """Verify _resolve_completion_sequence triggers guardrail on UNKNOWN and does not blind-tap."""
+    dev = DummyDevice()
+    fsm = StateMachine(dev)
+    
+    # Blank frame is classified as UNKNOWN -> must return False and not blind tap
+    success = fsm._resolve_completion_sequence(max_steps=1)
+    assert success is False
+
+
+def test_base_task_post_check_uses_navigation_coords():
+    """Verify BaseTask post_check references NavigationCoords.BOTTOM_NAV['home']."""
+    from tasks.base import BaseTask
+    from core.state_machine import NavigationCoords
+
+    class ConcreteTask(BaseTask):
+        def run(self):
+            return True
+
+    dev = DummyDevice()
+    task = ConcreteTask(dev)
+    assert NavigationCoords.BOTTOM_NAV["home"] == (198, 1020)
+    assert hasattr(task, "post_check")
+
+

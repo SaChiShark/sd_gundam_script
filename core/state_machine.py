@@ -45,13 +45,13 @@ class NavigationCoords:
     BACK_BUTTON: Tuple[int, int] = (65, 55)
 
     # Personal Base Entrances
-    BASE_CHARACTER_REQUESTS_BANNER: Tuple[int, int] = (1510, 315)
+    BASE_CHARACTER_REQUESTS_BANNER: Tuple[int, int] = (1337, 224)
 
-    # Character Requests Overview 3-Slot Cards
+    # Character Requests Overview 3-Slot Cards (Calibrated Card Centers)
     CHAR_REQ_SLOT_CARDS: List[Tuple[int, int]] = [
-        (425, 420),   # Slot 1
-        (960, 420),   # Slot 2
-        (1495, 420),  # Slot 3
+        (380, 440),   # Slot 1
+        (980, 440),   # Slot 2
+        (1500, 440),  # Slot 3
     ]
 
     # Character Requests Detail Card Navigation Arrows
@@ -60,9 +60,9 @@ class NavigationCoords:
 
     # Character Requests Detail Action Buttons
     CHAR_REQ_TRASH_CAN: Tuple[int, int] = (1752, 182)
-    CHAR_REQ_ACCEPT_BUTTON: Tuple[int, int] = (1623, 800)
-    CHAR_REQ_CHALLENGE_BUTTON: Tuple[int, int] = (1623, 800)
-    CHAR_REQ_DELIVER_BUTTON: Tuple[int, int] = (1623, 800)
+    CHAR_REQ_ACCEPT_BUTTON: Tuple[int, int] = (1623, 858)
+    CHAR_REQ_CHALLENGE_BUTTON: Tuple[int, int] = (1623, 858)
+    CHAR_REQ_DELIVER_BUTTON: Tuple[int, int] = (1623, 858)
     CHAR_REQ_REPORT_BUTTON: Tuple[int, int] = (1623, 858)
     CHAR_REQ_DIALOG_SKIP: Tuple[int, int] = (1850, 60)
 
@@ -71,10 +71,15 @@ class NavigationCoords:
     DELIVER_MODAL_CONFIRM_BTN: Tuple[int, int] = (1160, 955)
 
     # Development Tree Touch Targets (Verified Calibrated)
-    DEVELOP_TREE_R_UNIT: Tuple[int, int] = (815, 485)
+    DEVELOP_TREE_BASE_UNIT: Tuple[int, int] = (550, 450)
+    DEVELOP_TREE_R_UNIT: Tuple[int, int] = (550, 450)
     DEVELOP_MODAL_EXECUTE_BTN: Tuple[int, int] = (1148, 996)
     DEVELOP_CONFIRM_EXECUTE_BTN: Tuple[int, int] = (1148, 996)
     DEVELOP_TAP_TO_NEXT: Tuple[int, int] = (965, 1026)
+
+    # Acquisition Guide Modal (主要獲得方式)
+    ACQUISITION_GUIDE_CLOSE_BTN: Tuple[int, int] = (960, 995)
+    ACQUISITION_GUIDE_MOVE_BTN: Tuple[int, int] = (1660, 235)
 
 
 class HomeAnchorROI:
@@ -316,6 +321,14 @@ class StateMachine:
                 logger.warning("[StateMachine] 遇到未辨識頁面，已觸發安全防護並暫停。請向使用者請教。")
                 return False
 
+            # 3. If on a secondary page (CHARACTER_REQUESTS, PERSONAL_BASE, CULTIVATION_STAGES, STAGES_MENU, etc.), tap Home tab
+            if page_type in (PageType.CHARACTER_REQUESTS, PageType.PERSONAL_BASE, PageType.CULTIVATION_STAGES, PageType.STAGES_MENU):
+                logger.info(f"[StateMachine] On secondary page ({page_type.name}), tapping '主畫面' (Home) tab...")
+                home_nav = NavigationCoords.BOTTOM_NAV["home"]
+                self.device.tap(home_nav[0], home_nav[1])
+                self.device.random_sleep(2.5, 3.5)
+                continue
+
             self.device.random_sleep(1.0, 1.8)
 
         logger.error(f"Navigation timed out after {timeout}s without reaching Home screen.")
@@ -393,19 +406,68 @@ class StateMachine:
         if ptype != PageType.PERSONAL_BASE:
             if not self.navigate_to_personal_base(timeout=timeout / 2):
                 return False
+            frame = self.device.screencap()
 
-        logger.info(f"[StateMachine] Tapping 角色要求 banner at {NavigationCoords.BASE_CHARACTER_REQUESTS_BANNER}...")
-        self.device.tap(NavigationCoords.BASE_CHARACTER_REQUESTS_BANNER[0], NavigationCoords.BASE_CHARACTER_REQUESTS_BANNER[1])
-        self.device.random_sleep(2.5, 3.5)
+        # Step A: Attempt to locate '角色要求' via template on current view
+        target_coords = None
+        match = self.vision.match_template(frame, "assets/buttons/base_char_request.png", threshold=0.75)
+        if match:
+            target_coords = (match.x + match.w // 2, match.y + match.h // 2)
+            logger.info(f"[StateMachine] Found '角色要求' template at {target_coords} (conf={match.confidence:.2f})")
+        else:
+            # Step B: If not found, swipe base map to the left to bring the right-side building into view
+            logger.info("[StateMachine] '角色要求' not in view, swiping base map left to reveal entrance...")
+            self.device.swipe_bezier((1400, 540), (600, 540), duration_ms=400)
+            self.device.random_sleep(1.0, 1.5)
+            frame = self.device.screencap()
 
-        frame = self.device.screencap()
-        ptype, _ = self.page_manager.classify(frame)
-        if ptype == PageType.CHARACTER_REQUESTS:
-            logger.success("[StateMachine] Successfully entered Character Requests.")
-            self.current_state = GameState.CHARACTER_REQUESTS
-            return True
+            match = self.vision.match_template(frame, "assets/buttons/base_char_request.png", threshold=0.75)
+            if match:
+                target_coords = (match.x + match.w // 2, match.y + match.h // 2)
+                logger.info(f"[StateMachine] Found '角色要求' template after swipe at {target_coords} (conf={match.confidence:.2f})")
+            else:
+                # Step C: Fallback to OCR text search
+                ocr_items = self.page_manager._extract_all_text(frame)
+                for t, (cx, cy), _ in ocr_items:
+                    if "要求" in t and cy < 450:
+                        target_coords = (cx, cy)
+                        logger.info(f"[StateMachine] Found '要求' OCR text after swipe at {target_coords}")
+                        break
 
-        return ptype == PageType.CHARACTER_REQUESTS
+        if not target_coords:
+            target_coords = NavigationCoords.BASE_CHARACTER_REQUESTS_BANNER
+            logger.warning(f"[StateMachine] Using fallback coordinates for 角色要求: {target_coords}")
+
+        logger.info(f"[StateMachine] Tapping 角色要求 banner at {target_coords}...")
+        self.device.tap(target_coords[0], target_coords[1])
+        self.device.random_sleep(2.0, 3.0)
+
+        # Poll and resolve any interstitial dialogs (e.g. newly unlocked character notification)
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            frame = self.device.screencap()
+            ptype, _ = self.page_manager.classify(frame)
+            if ptype == PageType.CHARACTER_REQUESTS:
+                logger.success("[StateMachine] Successfully entered Character Requests.")
+                self.current_state = GameState.CHARACTER_REQUESTS
+                return True
+
+            if ptype in (PageType.MODAL_INFO, PageType.MODAL_CONFIRM, PageType.DIALOGUE, PageType.ITEM_ACQUIRED):
+                logger.info(f"[StateMachine] Resolving interstitial modal {ptype.name}...")
+                self.page_manager.resolve_page(frame, max_attempts=1)
+                self.device.random_sleep(1.5, 2.0)
+                continue
+
+            if ptype == PageType.PERSONAL_BASE:
+                logger.info("[StateMachine] Still on Personal Base, retrying tap on 角色要求 banner...")
+                self.device.tap(target_coords[0], target_coords[1])
+                self.device.random_sleep(2.5, 3.0)
+                continue
+
+            self.device.random_sleep(1.0, 1.5)
+
+        logger.error(f"[StateMachine] Failed to enter Character Requests within {timeout}s.")
+        return False
 
     def select_character_request_slot(self, slot_index: int) -> bool:
         """Tap one of the 3 daily character request cards (1-indexed: 1, 2, or 3)."""
@@ -530,14 +592,71 @@ class StateMachine:
                 timeout=3.5
             )
 
+            # Wait for production animation to complete
+            self.device.random_sleep(3.8, 4.5)
+
             # 4. Tap 'TAP TO NEXT' on production animation screen
             self.device.tap(*NavigationCoords.DEVELOP_TAP_TO_NEXT)
-            self.device.random_sleep(1.8, 2.5)
+            self.device.random_sleep(2.0, 2.5)
 
-        # 5. Return to character request detail view via top-left back button
+            # 5. Dismiss unit acquired/unlocked screen and return to tree
+            frame = self.device.screencap()
+            ptype, meta = self.page_manager.classify(frame)
+            if ptype == PageType.ITEM_ACQUIRED:
+                self.page_manager.handle_item_acquired(frame, meta)
+            else:
+                self.device.tap(*NavigationCoords.DEVELOP_TAP_TO_NEXT)
+                self.device.random_sleep(2.0, 2.5)
+
+        # 6. Return to character request detail view via top-left back button
         logger.info(f"[StateMachine] Completed {times} developments. Returning via back button...")
         self.device.tap(*NavigationCoords.BACK_BUTTON)
-        self.device.random_sleep(2.0, 3.0)
+        self.device.random_sleep(2.5, 3.5)
+        return True
+
+    def develop_unit_from_acquisition(self) -> bool:
+        """
+        From '主要獲得方式' modal, tap '移動' to enter Development Tree,
+        develop the target unit, and return back to Character Request screen.
+        """
+        logger.info("[StateMachine] Navigating from acquisition modal to development tree via '移動'...")
+        self.device.tap(*NavigationCoords.ACQUISITION_GUIDE_MOVE_BTN)
+        self.device.random_sleep(3.0, 4.0)
+
+        # On the development tree screen, locate and tap target unit node via YOLO / calibrated anchor
+        logger.info("[StateMachine] Locating unit node on development tree via YOLO/anchor...")
+        self.locate_and_tap_target(
+            target_class="unit_r",
+            fallback_anchor=NavigationCoords.DEVELOP_TREE_R_UNIT,
+            action_name="tap_unit_node_tree",
+            timeout=2.5
+        )
+        self.device.random_sleep(2.0, 2.5)
+
+        # Tap '執行開發' in unit detail modal
+        self.locate_and_tap_target(
+            target_class="btn_confirm",
+            fallback_anchor=NavigationCoords.DEVELOP_MODAL_EXECUTE_BTN,
+            action_name="tap_dev_modal_execute",
+            timeout=2.5
+        )
+
+        # Tap '執行' in confirmation modal
+        self.locate_and_tap_target(
+            target_class="btn_confirm",
+            fallback_anchor=NavigationCoords.DEVELOP_CONFIRM_EXECUTE_BTN,
+            action_name="tap_confirm_execute",
+            timeout=3.5
+        )
+
+        # Tap 'TAP TO NEXT' on production animation screen
+        self.device.tap(*NavigationCoords.DEVELOP_TAP_TO_NEXT)
+        self.device.random_sleep(1.8, 2.5)
+
+        # Return to character request screen via top-left back button
+        logger.info("[StateMachine] Unit development finished. Returning to Character Request...")
+        self.device.tap(*NavigationCoords.BACK_BUTTON)
+        self.device.random_sleep(2.5, 3.5)
         return True
 
     def deliver_unit_in_modal(self) -> bool:
@@ -564,6 +683,20 @@ class StateMachine:
         """
         Tap '報告' button on completed character request, then resolve dialogue and reward popup.
         """
+        logger.info("[StateMachine] Verifying '報告' button before claiming...")
+        frame = self.device.screencap()
+        ocr_items = self.page_manager._extract_all_text(frame)
+        has_report_ocr = any(
+            any(k in text for k in ["報告", "報", "告"])
+            for text, (cx, cy), _ in ocr_items
+            if cx > 1400 and cy > 780
+        )
+        has_report_yolo = bool(self.detector and self.detector.find_target(frame, "btn_report", conf=0.55))
+
+        if not (has_report_ocr or has_report_yolo):
+            logger.error("[StateMachine] 畫面未出現『報告』按鈕（任務尚未完成或按鈕狀態不符），拒絕盲點！")
+            return False
+
         logger.info("[StateMachine] Tapping 報告 button...")
         success = self.locate_and_tap_target(
             target_class="btn_report",
@@ -591,8 +724,23 @@ class StateMachine:
                 return True
             elif page_type == PageType.CHARACTER_REQUESTS:
                 return True
+            elif page_type == PageType.UNKNOWN:
+                logger.warning(f"[StateMachine] 結算流程遭遇未辨識頁面 (步驟 {step})，觸發安全防護絕不盲點！")
+                self.trigger_exception_guardrail(
+                    frame,
+                    reason=f"Unknown page encountered during completion sequence at step {step}",
+                    action_name="resolve_completion_sequence"
+                )
+                return False
             else:
-                self.device.tap(960, 540)
-                self.device.random_sleep(1.5, 2.0)
+                resolved_type, success = self.page_manager.resolve_page(frame, max_attempts=1)
+                if not success and resolved_type == PageType.UNKNOWN:
+                    logger.warning(f"[StateMachine] 無法自動解析頁面 [{page_type.value}]，觸發安全防護。")
+                    self.trigger_exception_guardrail(
+                        frame,
+                        reason=f"Unresolvable page [{page_type.value}] at completion step {step}",
+                        action_name="resolve_completion_sequence"
+                    )
+                    return False
         return True
 

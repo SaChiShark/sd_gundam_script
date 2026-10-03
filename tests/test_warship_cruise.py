@@ -32,9 +32,11 @@ def test_warship_cruise_initialization():
     task = WarshipCruiseTask(dev)
     assert task.name == "warship_cruise"
     assert task.COORD_CRUISE_BANNER == (160, 240)
-    assert task.COORD_COLLECT_ALL == (1600, 830)
-    assert task.COORD_MODAL_OK == (960, 990)
-    assert task.COORD_NAV_HOME == (100, 1030)
+    assert task.COORD_COLLECT_ALL == (1676, 875)
+    assert task.COORD_MODAL_OK == (960, 940)
+    assert task.COORD_NAV_HOME == (198, 1020)
+    assert task.COORD_NAV_BASE == (1292, 1020)
+    assert task.COORD_BACK_BTN == (65, 55)
 
 
 def test_is_collect_available_detection():

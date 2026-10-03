@@ -11,6 +11,14 @@ This skill establishes the engineering protocol for **deterministic UI element l
 
 ---
 
+## 0. 執行環境標準 (Runtime Environment Standard)
+
+- **唯一指定 Conda 環境**：**`sd_gundam`** (`C:\Users\sharkMeow\miniconda3\envs\sd_gundam`)
+- **環境啟用**：`conda activate sd_gundam`
+- **鐵律要求**：所有視覺定位、模板截圖、檢查工具（`tools/inspector.py`、`tools/locator.py`）與測試必須於 `sd_gundam` 環境中執行，嚴禁使用 `base` 或其他環境。
+
+---
+
 ## 1. Core Motivation & Problem Statement
 
 ### The "Eyeball Guesswork" Trap
@@ -65,6 +73,7 @@ When locating icons in dense arrays (such as the G-Generation Development Tree o
 from tools.locator import UILocator
 
 # Search inside the tech-tree ROI, excluding background space
+# NOTE: The ROI coords below are calibrated for the 1920x1080 Development Tree; adjust per target screen.
 clusters = UILocator.detect_foreground_clusters(
     frame,
     roi=(360, 200, 1560, 750),
@@ -74,7 +83,7 @@ clusters = UILocator.detect_foreground_clusters(
 # Returns sorted list of bounding boxes [(x, y, w, h), ...]
 ```
 
-### Pillar 3: Click-and-Diff Verification Guard
+### Pillar 3: Click-and-Diff Verification Guard & Semantic State Guard
 Never fire-and-forget clicks on unknown or newly calibrated elements. Always verify state transition by comparing the screen before and after:
 
 ```python
@@ -95,6 +104,12 @@ is_effective, diff_pct = UILocator.verify_click_effect(
 if not is_effective:
     logger.error(f"Tap at ({target_x}, {target_y}) had no effect (diff={diff_pct:.2f}%). Re-evaluating...")
 ```
+
+> [!WARNING]
+> **適用限制與抗干擾原則**：
+> 1. 在具備動態宇宙星空背景、粒子光效或按鈕呼吸燈的畫面中，環境像素波動容易使單純的 Frame Diff 產生偽陽性。
+> 2. **推薦標準做法**：優先使用 `PageManager.classify()` 或 YOLO 邊界框狀態轉移（例如按鈕消失、彈窗浮現、數值變化）作為主導閉環驗證，Frame Diff 作為輔助檢驗。
+> 3. **按鈕點擊原則**：靜態系統按鈕（NavBar、Back）採用 `NavigationCoords` 固定座標；動態按鈕強制由 CV / YOLO 辨識後點擊。若遇到未知或未定義操作，**強制規定停下向使用者請示，絕不盲點**。
 
 ---
 

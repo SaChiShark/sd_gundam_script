@@ -23,44 +23,48 @@
 flowchart TD
     subgraph UI_Scheduler [排程與使用者介面]
         Main["main.py (CLI / 進入點)"]
-        Config["config.yaml (任務開關與設定)"]
+        Scripts["scripts/ (Step 1~4 獨立步驟執行器)"]
+        Config["config.yaml (任務開關與設備設定)"]
     end
 
     subgraph Task_Layer [任務工作流層 Tasks]
         TaskRunner[TaskRunner]
-        MailTask[MailboxTask]
-        GachaTask[DailyGachaTask]
-        SweepTask[SweepStageTask]
+        DailyLogin[DailyLoginTask]
+        WarshipCruise[WarshipCruiseTask]
+        CharRequests[PersonalBaseRequestTask]
+        DailyCultivation[DailyCultivationTask]
     end
 
     subgraph State_Layer [狀態與導航層 State & Navigation]
-        FSM[GameState Machine]
-        PopupHandler[全域彈窗與公告攔截器]
-        Navigator[UI 導航節點圖]
+        FSM[GameState Machine (三錨點收斂與導航圖)]
+        PageManager[PageManager (集中頁面分類與例外彈窗標準處理)]
+        PopupHandler[全域彈窗/下載確認/對話跳過]
     end
 
     subgraph Vision_Layer [感知與視覺識別層 Vision]
+        YOLODetector["YOLOUIDetector (YOLO11n ONNX DirectML / GPU 加速)"]
         TemplateMatch[OpenCV 模板匹配]
         OCR[RapidOCR 文字識別]
-        PixelCheck[顏色/像素特徵快速校驗]
+        PixelCheck[RGB/BGR 像素通道特徵快速校驗]
     end
 
     subgraph Device_Layer [設備通信與操作層 Device]
         ADBBridge[ADB 通信與端口自動偵測]
-        ScreencapStream[高速二進位截圖傳輸]
-        HumanInput[擬真隨機點擊與貝茲滑動]
+        ScreencapStream[高速二進位截圖傳輸 <100ms]
+        HumanInput[擬真隨機點擊與貝茲非線性滑動]
     end
 
     subgraph Emulator_Layer [執行實體]
-        Emulator["Android 模擬器 (Nox / MuMu / 雷電)"]
+        Emulator["Android 模擬器 (1920x1080 橫屏)"]
     end
 
-    Main --> Config
-    Main --> TaskRunner
-    TaskRunner --> MailTask & GachaTask & SweepTask
-    MailTask & GachaTask & SweepTask --> FSM
-    FSM --> PopupHandler & Navigator
+    Main --> Config & TaskRunner
+    Scripts --> Config & Task_Layer
+    TaskRunner --> DailyLogin & WarshipCruise & CharRequests & DailyCultivation
+    DailyLogin & WarshipCruise & CharRequests & DailyCultivation --> FSM
+    FSM --> PageManager & PopupHandler
     FSM --> Vision_Layer
+    PageManager --> Vision_Layer
     Vision_Layer --> ScreencapStream
     HumanInput --> ADBBridge
     ScreencapStream & ADBBridge --> Emulator
@@ -74,38 +78,47 @@ flowchart TD
 - **ADB 連線管理**：支援自動掃描本機常見模擬器端口（Nox `62001`, MuMu `16384`, LDPlayer `5555`）。
 - **高速截圖**：透過 `adb exec-out screencap -p` 建立 Memory Stream，避開磁碟 I/O，截圖耗時壓在 100ms 內。
 - **擬真輸入 (Human Input)**：
-  - 點擊目標範圍內自動產生邊緣內縮安全區，計算隨機座標偏移。
+  - 點擊目標範圍內自動產生邊緣內縮安全區，計算隨機高斯座標偏移。
   - 滑動操作產生隨機控制點之二次/三次貝茲曲線，以階梯式時間插值執行。
 
-### 3.2 感知層 (`core/vision.py`)
+### 3.2 感知層 (`core/vision.py` & `tools/yolo_detector.py`)
+- **GPU 加速物件偵測 (YOLO11n DirectML)**：
+  - 採用 ONNX Runtime DirectML 驅動本機 NVIDIA RTX 4070 SUPER GPU，於次毫秒內完成整頁 UI 元件辨識（`btn_skip`, `btn_confirm`, `btn_trash`, `btn_accept` 等）。
+  - 抗動態特效與按鈕呼吸光干擾，徹底杜絕傳統模板比對閾值過高導致的偽陰性（False Negative）。
 - **模板比對 (Template Matching)**：
   - 採用 `cv2.TM_CCOEFF_NORMED` 進行正規化相關性係數匹配。
-  - 支援動態指定匹配閾值（Threshold），回傳符合目標的中心座標與外框。
 - **文字辨識 (OCR)**：
-  - 使用 `rapidocr-onnxruntime`，具備極輕量、啟動零延遲、無需複雜 GPU 環境之優勢。
-  - 用於掃蕩次數、體力數值、特定按鈕文字辨識。
+  - 使用 `rapidocr-onnxruntime`，用於掃蕩剩餘次數、關卡名稱、彈窗文字語意判別。
+- **像素通道校驗 (Pixel Check)**：
+  - 針對關鍵啟用/禁用按鈕（如全部回收之亮藍 $B>180$ vs 灰暗 $B\approx 111$）進行色彩通道值精準比對。
 
-### 3.3 狀態導航與異常自癒 (`core/state_machine.py`)
-- **主畫面三大核心錨點 (Home Screen 3-Anchor Verification)**：
-  為避免單一圖標受到活動 Banner 或半透明彈窗干擾，系統實作三錨點多數決投票機制（Multi-Anchor Voting）：
-  1. **畫面右下角**：核心「出擊」按鈕 (`home_sortie.png`, ROI: `(1450, 850, 470, 230)`)，權重最高。
-  2. **畫面左上角**：玩家等級數值與頭像框 (`home_level.png`, ROI: `(0, 0, 400, 160)`)。
-  3. **畫面右上角**：AP 體力條與貨幣欄位 (`home_stamina.png`, ROI: `(1200, 0, 720, 160)`)。
-  只有在彈窗完全關閉時，這三大錨點才會同時無遮蔽呈現，保證 100% 準確率。
-- **全域彈窗守衛 (Global Popup Guard)**：在執行任何任務動作前，預先掃描畫面是否有「登入獎勵簽到」、「營運公告 X 關閉」、「今日不再提示」、「連線逾時重試」等擾亂元素，一律優先清理。
-
-- **超時自癒 (Auto-Recovery)**：若特定狀態停留超過 30 秒，自動觸發 Android 實體返回鍵嘗試回到上一層，直至重新鎖定主頁錨點。
+### 3.3 狀態導航與主頁收斂 (`core/state_machine.py`)
+- **主畫面三大核心錨點多數決 (3-Anchor Majority Voting)**：
+  1. 畫面右下角：核心「出擊」按鈕 (`home_sortie.png`, ROI: `(1250, 580, 670, 350)`)。
+  2. 畫面左上角：玩家等級數值與頭像框 (`home_level.png`, ROI: `(0, 0, 300, 150)`)。
+  3. 畫面右上角：AP 體力條與貨幣欄位 (`home_stamina.png`, ROI: `(1100, 0, 300, 150)`)。
+- **全自動路徑收斂 (`navigate_to_home()`)**：
+  - 若位於二級頁面（基地、培育關卡清單等），優先點擊底欄「主畫面」Tab。
+  - 若遇中途彈窗，自動調度 `PageManager` 予以標準化排查。
 
 ### 3.4 標準化頁面管理與例外處理 (`core/page_manager.py`)
 - **頁面標準分類器 (`classify()`)**：
-  - 透過 OCR 關鍵字與特徵錨點將當前畫面統一分類（如 `HOME`、`DATE_RESET`、`LOGIN_BONUS`、`MODAL_INFO`、`MODAL_CONFIRM`、`COMM_ERROR`、`TITLE_SCREEN`、`ITEM_ACQUIRED`）。
-  - 各畫面具備獨立標準 Handler（如 `handle_date_reset`, `handle_login_bonus`, `handle_modal_info` 等），拒絕各任務私下自行盲猜處理。
+  - 透過 OCR 關鍵字、版面佈局與特徵錨點將當前畫面統一分類（`HOME`、`DATE_RESET`、`LOGIN_BONUS`、`RESOURCE_DOWNLOAD`、`MODAL_INFO`、`MODAL_CONFIRM`、`ITEM_ACQUIRED`、`DIALOGUE` 等）。
+  - 各畫面具備獨立標準 Handler（如 `handle_resource_download`, `handle_item_acquired`, `handle_login_bonus` 等），拒絕各任務各自私下獨立處理。
+- **標準化資源更新下載處理 (`handle_resource_download`)**：
+  - 依使用者最高指導原則：無論在啟動或任何流程中跳出資料更新/下載彈窗，一律自動點擊「下載」並等待下載完成。
 - **未知頁面安全防護 (Unknown Page Guardrail)**：
-  - 偵測到未定義或異常頁面（`UNKNOWN`）時，自動儲存截圖至 `captures/unknown_pages/` 並寫入 `unknown_pages_log.json`。
-  - 發出終端警報並主動提示向使用者請教處理方針，落實 Human-in-the-loop 安全防護。
+  - 偵測到未定義或異常頁面（`UNKNOWN`）時，自動儲存截圖至 `captures/unknown_pages/` 並寫入 Log，主動停下向使用者請示，絕不盲點。
 
 ### 3.5 任務層 (`tasks/`)
-- 統一介面 `BaseTask`：
-  - `run() -> bool`：任務主執行邏輯。
-  - `pre_check() -> bool`：任務前置檢查（如體力是否充足、次數是否已歸零）。
-  - `post_check() -> bool`：任務成功後之狀態復原與領取驗證。
+- 統一繼承介面 `BaseTask`（含 `run()`, `pre_check()`, `post_check()`）。
+- **多模態驗證機制 (Multi-Modal Verification)**：
+  - 杜絕純布林或單一模板門檻誤判。在操作前後均檢驗狀態差（如戰艦巡航累積時間是否歸零、道具數是否重置為 0、主頁 AP 數值是否實質增加）。
+
+### 3.6 執行環境與硬體架構 (`sd_gundam` Conda Environment)
+- **專屬 Conda 環境**：`sd_gundam` (Python 3.12.15)
+- **直譯器路徑**：`C:\Users\sharkMeow\miniconda3\envs\sd_gundam\python.exe`
+- **啟用指令**：`conda activate sd_gundam`
+- **環境隔離鐵律**：嚴禁使用 Conda `base` 環境，嚴禁私自建立其他零散虛擬環境。所有開發、測試與任務執行均強制綁定 `sd_gundam`。
+- **硬體推論加速**：基於 `onnxruntime-directml`，已啟用 `['DmlExecutionProvider', 'CPUExecutionProvider']`，將 YOLO UI 物件偵測與 RapidOCR 模型直接卸載至本機 **NVIDIA GeForce RTX 4070 SUPER** 運算。
+

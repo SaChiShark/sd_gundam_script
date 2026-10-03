@@ -30,6 +30,12 @@ class PageType(Enum):
     CHARACTER_REQUESTS = "character_requests" # 角色要求 (總覽/詳情)
     MODAL_DELIVER = "modal_deliver"           # 確認交付機體視窗
     DIALOGUE = "dialogue"                     # 角色對話/劇情視窗 (右上角帶「略過」)
+    SPLASH_SCREEN = "splash_screen"           # 啟動健康警語/年齡聲明畫面
+    RESOURCE_DOWNLOAD = "resource_download"   # 資源/資料下載確認彈窗 (一律點擊下載)
+    CULTIVATION_STAGES = "cultivation_stages" # 強化培育關卡 (總覽或關卡清單)
+    STAGES_MENU = "stages_menu"               # 關卡主選單 (主要關卡/事件/大師聯盟/強化培育關卡)
+    ACQUISITION_GUIDE = "acquisition_guide"   # 主要獲得方式彈窗 (機體未持有/不足時彈窗)
+    LOADING = "loading"                       # 遊戲轉場/讀取畫面 (帶 Tips 或 Connecting / NOW LOADING)
 
 
 class PageManager:
@@ -85,22 +91,37 @@ class PageManager:
         metadata["combined_text"] = combined_text
 
         # 3. Check for Date Reset (換日彈窗)
-        if any(kw in combined_text for kw in ["日期已改變", "更新資料", "將返回主畫面", "前往主畫面"]):
+        if any(kw in combined_text for kw in ["日期已改變", "更新資料", "將返回主畫面", "前往主畫面", "將返回主書面", "前往主書面"]):
             for text, center, _ in ocr_items:
-                if "前往主畫面" in text or "主畫面" in text:
+                if any(kw in text for kw in ["前往主畫面", "主畫面", "前往主書面", "主書面", "前往"]):
                     metadata["btn_home_center"] = center
             return PageType.DATE_RESET, metadata
 
         # 4. Check for Login Bonus / Daily Sign-in (登入獎勵)
-        if any(kw in combined_text for kw in ["LOGIN BONUS", "登入獎勵", "TAP TO NEXT", "送達的配給品"]):
+        norm_text = combined_text.replace(" ", "").upper()
+        if (
+            any(kw in norm_text for kw in ["LOGINBONUS", "TAPTONEXT", "登入獎勵", "登入第", "回歸登", "送達的配給品", "ANNIVERSARY", "NMVERSARY"])
+            or ("DAY1" in norm_text or "DAY2" in norm_text)
+        ):
             for text, center, _ in ocr_items:
+                t_clean = text.replace(" ", "").upper()
                 if "略過" in text:
                     metadata["skip_btn_center"] = center
+                elif "TAPTONEXT" in t_clean or "NEXT" in t_clean:
+                    metadata["next_btn_center"] = center
             return PageType.LOGIN_BONUS, metadata
+
+        # 4.1 Check for Loading / Transition Screen (Tips / NOW LOADING)
+        if any(kw in combined_text for kw in ["Tips", "NOW LOADING", "NOWLOADING"]):
+            return PageType.LOADING, metadata
 
         # 5. Check for Title Screen (TOUCH TO START)
         if any(kw in combined_text for kw in ["TOUCH TO START", "TOUCHTOSTART", "資料同步"]):
             return PageType.TITLE_SCREEN, metadata
+
+        # 5.1 Check for Splash Screen / Health / Legal Disclaimer
+        if any(kw in combined_text for kw in ["可免費任玩", "免費遊戲", "注意以下事項", "健康遊戲", "年滿14歲", "盡量在明亮的地方遊玩"]):
+            return PageType.SPLASH_SCREEN, metadata
 
         # 6. Check for Deliver Unit Modal (確認交付彈窗)
         if "確認交付" in combined_text or "交付單位" in combined_text or "可交付單位" in combined_text:
@@ -120,29 +141,56 @@ class PageManager:
                     metadata["ok_btn_center"] = center
             return PageType.ITEM_ACQUIRED, metadata
 
-        # 7. Check for Modal Info / Announcement (公告 / 道具詳情 / 資訊彈窗)
-        if any(kw in combined_text for kw in ["公告", "道具詳情", "要求資訊", "持有數量"]):
-            # Try OCR close button first
+        # 6.5 Check for Acquisition Guide Modal (主要獲得方式彈窗)
+        if any(kw in combined_text for kw in ["主要獲得方式", "獲得方式", "主要获得方式", "获得方式"]) and any(kw in combined_text for kw in ["開發", "开发", "移動", "移动", "關閉", "关闭"]):
             for text, center, _ in ocr_items:
-                if "關閉" in text:
+                if "關閉" in text or "关闭" in text:
                     metadata["close_btn_center"] = center
-            # Try template matching for close buttons
+                elif "移動" in text or "移动" in text:
+                    metadata["move_btn_center"] = center
             if "close_btn_center" not in metadata:
-                for tmpl in ["assets/buttons/btn_close_gray.png", "assets/buttons/btn_close_blue.png"]:
-                    try:
-                        if match := self.vision.match_template(frame, tmpl, threshold=0.78):
-                            metadata["close_btn_center"] = match.center
-                            break
-                    except (FileNotFoundError, ValueError):
-                        pass
+                metadata["close_btn_center"] = (960, 995)
+            if "move_btn_center" not in metadata:
+                metadata["move_btn_center"] = (1660, 235)
+            return PageType.ACQUISITION_GUIDE, metadata
+
+        # 7. Check for Modal Info / Announcement (公告 / 道具詳情 / 資訊彈窗)
+        if any(kw in combined_text for kw in ["公告", "道具詳情", "要求資訊", "持有數量", "已解放新角色", "新角色"]):
+            # Try template matching for modal OK or close buttons
+            for tmpl in ["assets/buttons/btn_modal_ok.png", "assets/buttons/btn_close_gray.png", "assets/buttons/btn_close_blue.png"]:
+                try:
+                    if match := self.vision.match_template(frame, tmpl, threshold=0.78):
+                        metadata["close_btn_center"] = match.center
+                        break
+                except (FileNotFoundError, ValueError):
+                    pass
+
+            # Try OCR close / OK button
+            if "close_btn_center" not in metadata:
+                for text, center, _ in ocr_items:
+                    if "關閉" in text or text.strip().upper() == "OK":
+                        metadata["close_btn_center"] = center
+                        break
+
             # Positional fallback based on popup type
             if "close_btn_center" not in metadata:
-                if "公告" in combined_text:
-                    metadata["close_btn_center"] = (960, 915)
-                else:
-                    metadata["close_btn_center"] = (960, 785)
+                metadata["close_btn_center"] = (960, 990)
 
             return PageType.MODAL_INFO, metadata
+
+        # 7.5 Check for Resource / Patch Download Modal (資源/資料更新下載彈窗)
+        # Rule: Whenever a resource download window appears, always confirm download
+        has_download_kw = any(kw in combined_text for kw in ["下載", "下载"]) and any(kw in combined_text for kw in ["取消", "MB", "GB", "Wi-Fi", "資料", "资料"])
+        has_download_btn = any(item[0] in ["下載", "下载"] and item[1][0] > 900 for item in ocr_items)
+        if has_download_kw or (has_download_btn and "取消" in combined_text):
+            for text, center, _ in ocr_items:
+                if text in ["下載", "下载"] and center[0] > 900:
+                    metadata["download_btn_center"] = center
+                elif text == "取消":
+                    metadata["cancel_btn_center"] = center
+            if "download_btn_center" not in metadata:
+                metadata["download_btn_center"] = (1149, 850)
+            return PageType.RESOURCE_DOWNLOAD, metadata
 
         # 8. Check for Modal Confirm (二度確認彈窗)
         is_two_button_confirm = "取消" in combined_text and any(btn in combined_text for btn in ["確定", "執行", "OK"])
@@ -158,13 +206,20 @@ class PageManager:
             return PageType.COMM_ERROR, metadata
 
         # 10. Check for Character Requests (角色要求 總覽或詳情)
-        if any("角色要求" in item[0] and item[1][1] < 200 for item in ocr_items):
+        if any(("角色要求" in item[0] or "要求" in item[0]) and item[1][1] < 200 for item in ocr_items):
             return PageType.CHARACTER_REQUESTS, metadata
 
         # 11. Check for Personal Base (個人基地主頁)
-        has_base_header = any("個人基地" in it[0] and it[1][1] < 150 for it in ocr_items)
-        has_base_facility = any(f in combined_text for f in ["MS船塢", "戰艦巡航", "戰術訓練", "出現限定要求", "出現中要求", "巡視", "房間設定", "出沒中的單位"])
-        if has_base_header or has_base_facility:
+        has_base_anchor = False
+        try:
+            if self.vision.match_template(frame, "assets/anchors/base_title.png", threshold=0.75):
+                has_base_anchor = True
+        except Exception:
+            pass
+
+        has_base_header = any(("個人基地" in it[0] or "个人基地" in it[0] or "基地" in it[0]) and it[1][1] < 150 for it in ocr_items)
+        has_base_facility = any(f in combined_text for f in ["MS船塢", "MS船坞", "戰艦巡航", "战舰巡航", "巡航", "戰術訓練", "战术训练", "出現限定要求", "限定要求", "出現中要求", "巡視", "房間設定", "出沒中的單位", "出没中的单位"])
+        if has_base_anchor or has_base_header or has_base_facility:
             return PageType.PERSONAL_BASE, metadata
 
         # 12. Check for Character Dialogue (角色對話，右上角帶略過)
@@ -173,6 +228,16 @@ class PageManager:
                 if text == "略過":
                     metadata["skip_btn_center"] = center
             return PageType.DIALOGUE, metadata
+
+        # 13. Check for Cultivation Stages (強化培育關卡 總覽或關卡清單)
+        if any(("強化培育" in item[0] or "培育關卡" in item[0]) and item[1][1] < 120 and item[1][0] < 700 for item in ocr_items):
+            return PageType.CULTIVATION_STAGES, metadata
+
+        # 14. Check for Stages Select Menu (關卡主選單)
+        has_stages_title = any(item[0] == "關卡" and item[1][1] < 100 and item[1][0] < 300 for item in ocr_items)
+        has_upgrade_card = any(("強化培育" in item[0] or "UPGRADE" in item[0]) and item[1][1] > 600 for item in ocr_items)
+        if has_stages_title and has_upgrade_card:
+            return PageType.STAGES_MENU, metadata
 
         # Unrecognized screen
         return PageType.UNKNOWN, metadata
@@ -184,7 +249,7 @@ class PageManager:
     def handle_date_reset(self, frame: np.ndarray, metadata: Dict[str, Any]) -> bool:
         """Handle date change reset popup."""
         logger.info("[PageHandler] 處理換日彈窗：點擊『前往主畫面』...")
-        center = metadata.get("btn_home_center", (960, 785))
+        center = metadata.get("btn_home_center", (960, 850))
         self.device.tap(center[0], center[1])
         self.device.random_sleep(3.0, 4.0)
         return True
@@ -196,6 +261,10 @@ class PageManager:
             sx, sy = metadata["skip_btn_center"]
             logger.info(f"[PageHandler] 點擊『略過』按鈕 ({sx}, {sy})...")
             self.device.tap(sx, sy)
+        elif "next_btn_center" in metadata:
+            nx, ny = metadata["next_btn_center"]
+            logger.info(f"[PageHandler] 點擊『TAP TO NEXT』按鈕 ({nx}, {ny})...")
+            self.device.tap(nx, ny)
         else:
             # Check if top-right skip is present by fallback coordinates
             logger.info("[PageHandler] 點擊右上『略過』(1850, 60) 與畫面中央 (960, 940)...")
@@ -205,8 +274,16 @@ class PageManager:
         self.device.random_sleep(2.0, 2.5)
         return True
 
-    def handle_item_acquired(self, frame: np.ndarray, metadata: Dict[str, Any]) -> bool:
+    def handle_loading(self, frame: np.ndarray, metadata: Dict[str, Any]) -> bool:
+        """Handle transition / game loading screen."""
+        logger.info("[PageHandler] 偵測到遊戲轉場/讀取畫面 (Tips/Loading)，等待加載完成...")
+        self.device.random_sleep(3.0, 5.0)
+        return True
+
+    def handle_item_acquired(self, frame: np.ndarray, metadata: Optional[Dict[str, Any]] = None) -> bool:
         """Handle item acquisition / sweep result modal."""
+        if metadata is None:
+            metadata = {}
         logger.info("[PageHandler] 處理結算/道具獲得彈窗：點擊『OK』...")
         center = metadata.get("ok_btn_center", (1665, 910))
         self.device.tap(center[0], center[1])
@@ -217,6 +294,14 @@ class PageManager:
         """Handle information / item detail popup."""
         logger.info("[PageHandler] 處理資訊彈窗：點擊中央『關閉』...")
         center = metadata.get("close_btn_center", (960, 785))
+        self.device.tap(center[0], center[1])
+        self.device.random_sleep(1.5, 2.0)
+        return True
+
+    def handle_acquisition_guide(self, frame: np.ndarray, metadata: Dict[str, Any]) -> bool:
+        """Handle acquisition guide modal (主要獲得方式) by clicking '關閉'."""
+        logger.info("[PageHandler] 處理主要獲得方式彈窗：點擊『關閉』...")
+        center = metadata.get("close_btn_center", (960, 995))
         self.device.tap(center[0], center[1])
         self.device.random_sleep(1.5, 2.0)
         return True
@@ -241,6 +326,25 @@ class PageManager:
         logger.info("[PageHandler] 處理遊戲標題畫面：點擊中央進入...")
         self.device.tap(960, 750)
         self.device.random_sleep(3.0, 4.5)
+        return True
+
+    def handle_splash_screen(self, frame: np.ndarray, metadata: Dict[str, Any]) -> bool:
+        """Handle game startup health/legal disclaimer splash screen."""
+        logger.info("[PageHandler] 處理健康警語畫面：輕觸螢幕中央推進...")
+        self.device.tap(960, 540)
+        self.device.random_sleep(2.0, 3.5)
+        return True
+
+    def handle_resource_download(self, frame: np.ndarray, metadata: Dict[str, Any]) -> bool:
+        """
+        Handle resource/data download popup by clicking '下載' (Download).
+        Per user rule: Whenever a data download prompt appears, always confirm download.
+        """
+        center = metadata.get("download_btn_center", (1149, 850))
+        logger.info(f"[PageHandler] 偵測到資料下載彈窗，依據使用者規範點擊『下載』 {center}...")
+        self.device.tap(center[0], center[1])
+        logger.info("[PageHandler] 已點擊『下載』，等待資源下載完成 (隨機等待 8.0~12.0s)...")
+        self.device.random_sleep(8.0, 12.0)
         return True
 
     def handle_dialogue(self, frame: np.ndarray, metadata: Dict[str, Any]) -> bool:
@@ -300,7 +404,7 @@ class PageManager:
     def resolve_page(
         self,
         frame: Optional[np.ndarray] = None,
-        max_attempts: int = 3,
+        max_attempts: int = 8,
     ) -> Tuple[PageType, bool]:
         """
         Classify and resolve current page using dedicated handlers.
@@ -337,8 +441,20 @@ class PageManager:
             elif page_type == PageType.TITLE_SCREEN:
                 self.handle_title_screen(frame, metadata)
 
+            elif page_type == PageType.SPLASH_SCREEN:
+                self.handle_splash_screen(frame, metadata)
+
+            elif page_type == PageType.RESOURCE_DOWNLOAD:
+                self.handle_resource_download(frame, metadata)
+
+            elif page_type == PageType.ACQUISITION_GUIDE:
+                self.handle_acquisition_guide(frame, metadata)
+
             elif page_type == PageType.DIALOGUE:
                 self.handle_dialogue(frame, metadata)
+
+            elif page_type == PageType.LOADING:
+                self.handle_loading(frame, metadata)
 
             elif page_type == PageType.UNKNOWN:
                 self.handle_unknown_page(frame, metadata)

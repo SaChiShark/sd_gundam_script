@@ -5,7 +5,7 @@ from typing import Optional
 from loguru import logger
 
 from core.device import Device
-from core.state_machine import StateMachine
+from core.state_machine import StateMachine, NavigationCoords
 from core.vision import Vision
 
 
@@ -41,14 +41,21 @@ class BaseTask(ABC):
     def post_check(self) -> bool:
         """Verify postconditions (e.g. return to Home screen)."""
         logger.info(f"[{self.name}] Running post-check: Returning to Home screen...")
-        # Tap bottom-left Home tab or back key until Home is reached
-        self.device.tap(150, 1035)
-        self.device.random_sleep(1.5, 2.5)
+        frame = self.device.screencap()
+        if self.fsm and self.fsm.is_home_screen(frame):
+            logger.info(f"[{self.name}] Already on Home screen.")
+            return True
+
+        if self.fsm:
+            return self.fsm.navigate_to_home()
+
+        # Fallback if fsm is not attached: tap bottom navigation Home tab
+        home_coords = NavigationCoords.BOTTOM_NAV["home"]
+        self.device.tap(home_coords[0], home_coords[1])
+        self.device.random_sleep(2.5, 3.5)
 
         frame = self.device.screencap()
-        if not self.fsm.is_home_screen(frame):
-            return self.fsm.navigate_to_home()
-        return True
+        return self.fsm.is_home_screen(frame) if self.fsm else True
 
     def execute(self) -> bool:
         """Template method orchestrating the full task lifecycle."""

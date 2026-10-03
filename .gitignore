@@ -63,6 +63,32 @@ logs/
 captures/
 debug/
 scratch/
-runs/
-datasets/
+
+# Machine Learning Models & Weights
+models/
 *.pt
+*.pth
+*.onnx
+*.engine
+*.tflite
+*.safetensors
+*.bin
+*.weights
+*.ckpt
+*.h5
+*.pkl
+
+# Datasets & Training artifacts
+datasets/
+runs/
+*.tfrecord
+
+# Data & Databases
+data/
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+

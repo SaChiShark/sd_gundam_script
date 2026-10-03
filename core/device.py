@@ -30,12 +30,21 @@ class Device:
     def __init__(
         self,
         config: Optional[DeviceConfig] = None,
-        serial: Optional[str] = None
+        serial: Optional[str] = None,
+        debug_mode: Optional[bool] = None,
+        step_by_step: Optional[bool] = None,
+        debug_dir: Optional[str] = None,
     ):
         self.config = config or DeviceConfig()
         self.host = self.config.host
         self.port = self.config.port
         self.serial: Optional[str] = serial or self.config.serial
+        self.debug_mode: bool = debug_mode if debug_mode is not None else self.config.debug_mode
+        self.step_by_step: bool = step_by_step if step_by_step is not None else self.config.step_by_step
+        if self.step_by_step:
+            self.debug_mode = True
+        self.debug_dir: str = debug_dir or self.config.debug_dir
+        self._tap_counter: int = 0
         self._adb = adbutils.AdbClient(host="127.0.0.1", port=5037)
         self._device: Optional[adbutils.AdbDevice] = None
         self._connected = False
@@ -92,26 +101,141 @@ class Device:
             logger.error(f"Screencap failed: {e}")
             raise AdbCommandError(f"Failed to capture screen: {e}") from e
 
+    def _render_tap_marker(
+        self,
+        frame: np.ndarray,
+        target_x: int,
+        target_y: int,
+        tap_idx: int,
+        action_name: str = ""
+    ) -> np.ndarray:
+        """
+        Draw a high-visibility target marker (crosshair, concentric circles, text badge)
+        onto the frame at the specified click coordinates.
+        """
+        annotated = frame.copy()
+        h, w = annotated.shape[:2]
+
+        red = (0, 0, 255)
+        cyan = (255, 255, 0)
+        white = (255, 255, 255)
+        dark_bg = (25, 25, 25)
+
+        # Concentric circles
+        cv2.circle(annotated, (target_x, target_y), 32, red, 3, cv2.LINE_AA)
+        cv2.circle(annotated, (target_x, target_y), 16, cyan, 2, cv2.LINE_AA)
+        cv2.circle(annotated, (target_x, target_y), 4, red, -1, cv2.LINE_AA)
+
+        # Crosshair lines with central gap
+        gap = 8
+        arm = 45
+        cv2.line(annotated, (max(0, target_x - arm), target_y), (max(0, target_x - gap), target_y), red, 2, cv2.LINE_AA)
+        cv2.line(annotated, (min(w, target_x + gap), target_y), (min(w, target_x + arm), target_y), red, 2, cv2.LINE_AA)
+        cv2.line(annotated, (target_x, max(0, target_y - arm)), (target_x, max(0, target_y - gap)), red, 2, cv2.LINE_AA)
+        cv2.line(annotated, (target_x, min(h, target_y + gap)), (target_x, min(h, target_y + arm)), red, 2, cv2.LINE_AA)
+
+        # Info Tag Banner
+        timestamp_str = time.strftime("%H:%M:%S")
+        tag_text = f"Step #{tap_idx} | Tap ({target_x}, {target_y}) | {timestamp_str}"
+        if action_name:
+            tag_text += f" | {action_name}"
+
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.65
+        thickness = 2
+        (text_w, text_h), baseline = cv2.getTextSize(tag_text, font, font_scale, thickness)
+
+        box_x1 = max(10, min(w - text_w - 24, target_x - text_w // 2))
+        if target_y - 48 > text_h + 16:
+            box_y1 = target_y - 48 - text_h - 10
+        else:
+            box_y1 = min(h - text_h - 24, target_y + 42)
+        box_x2 = box_x1 + text_w + 18
+        box_y2 = box_y1 + text_h + 14
+
+        overlay = annotated.copy()
+        cv2.rectangle(overlay, (box_x1, box_y1), (box_x2, box_y2), dark_bg, -1)
+        cv2.rectangle(overlay, (box_x1, box_y1), (box_x2, box_y2), cyan, 1)
+        cv2.addWeighted(overlay, 0.78, annotated, 0.22, 0, annotated)
+
+        cv2.putText(
+            annotated,
+            tag_text,
+            (box_x1 + 9, box_y2 - 8),
+            font,
+            font_scale,
+            white,
+            thickness,
+            cv2.LINE_AA
+        )
+        return annotated
+
     def tap(
         self,
         x: int,
         y: int,
-        radius: int = 5,
-        delay_after: Tuple[float, float] = (0.4, 0.8)
+        radius: int = 0,
+        delay_after: Tuple[float, float] = (0.4, 0.8),
+        action_name: str = ""
     ) -> None:
         """
-        Human-like randomized tap around (x, y) with slight Gaussian jitter.
+        Deterministic tap at exact (x, y) coordinates.
+        In debug mode, automatically captures a screenshot with visual tap marker
+        and provides interactive step-by-step control.
         """
         if not self._connected or self._device is None:
             self.connect()
 
-        offset_x = int(random.gauss(0, radius / 2))
-        offset_y = int(random.gauss(0, radius / 2))
-        target_x = max(0, x + max(-radius, min(radius, offset_x)))
-        target_y = max(0, y + max(-radius, min(radius, offset_y)))
+        target_x = x
+        target_y = y
 
-        logger.debug(f"Tap: requested=({x}, {y}) -> actual=({target_x}, {target_y})")
-        self._device.click(target_x, target_y)
+        # Debug mode: generate screenshot with click marker & step-by-step control
+        if self.debug_mode or self.step_by_step:
+            self._tap_counter += 1
+            os.makedirs(self.debug_dir, exist_ok=True)
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            filename = f"tap_{self._tap_counter:04d}_({target_x}_{target_y})_{timestamp}.png"
+            filepath = os.path.join(self.debug_dir, filename)
+
+            try:
+                frame = self.screencap()
+                annotated = self._render_tap_marker(
+                    frame, target_x, target_y, self._tap_counter, action_name=action_name
+                )
+                cv2.imwrite(filepath, annotated)
+                logger.info(f"📸 [Debug Tap #{self._tap_counter}] Marked screenshot saved to: {filepath}")
+            except Exception as e:
+                logger.warning(f"[Debug Tap] Failed to capture debug screenshot: {e}")
+
+            if self.step_by_step:
+                print("\n" + "=" * 76)
+                print(f"🕹️  [STEP DEBUG #{self._tap_counter}] 即將點擊: ({target_x}, {target_y})")
+                if action_name:
+                    print(f"🏷️  動作標籤: {action_name}")
+                print(f"📸 標記截圖: {filepath}")
+                print("   [Enter]  : 執行此點擊並前進到下一步 (Step-by-step)")
+                print("   [c / C]  : 切換為「一次執行完」(Continuous 模式，後續不再暫停)")
+                print("   [s / S]  : 跳過本次點擊 (Skip tap)")
+                print("   [q / Q]  : 中止腳本執行 (Quit)")
+                print("=" * 76)
+                try:
+                    user_cmd = input("請選擇操作 [Enter/c/s/q]: ").strip().lower()
+                except (EOFError, KeyboardInterrupt):
+                    user_cmd = "q"
+
+                if user_cmd == "c":
+                    logger.info("🕹️ [Debug Mode] 使用者切換為「一次執行完」(Continuous Mode)，後續將自動連續執行。")
+                    self.step_by_step = False
+                elif user_cmd == "s":
+                    logger.warning(f"🕹️ [Debug Mode] 使用者選擇跳過本次點擊: ({target_x}, {target_y})")
+                    return
+                elif user_cmd == "q":
+                    logger.error("🕹️ [Debug Mode] 使用者中止執行。")
+                    raise SystemExit("Execution aborted by user in debug mode.")
+
+        logger.debug(f"Tap: ({target_x}, {target_y})")
+        if self._device is not None:
+            self._device.click(target_x, target_y)
 
         sleep_dur = random.uniform(delay_after[0], delay_after[1])
         time.sleep(sleep_dur)
@@ -120,25 +244,16 @@ class Device:
         self,
         rect: Tuple[int, int, int, int],
         padding_ratio: float = 0.2,
-        delay_after: Tuple[float, float] = (0.5, 1.0)
+        delay_after: Tuple[float, float] = (0.5, 1.0),
+        action_name: str = ""
     ) -> None:
         """
-        Human-like tap within a bounding box (x, y, w, h).
-        Applies padding to avoid touching close to borders.
+        Deterministic tap at the exact geometric center of bounding box (x, y, w, h).
         """
         x, y, w, h = rect
-        pad_w = int(w * padding_ratio)
-        pad_h = int(h * padding_ratio)
-
-        safe_min_x = x + pad_w
-        safe_max_x = x + w - pad_w
-        safe_min_y = y + pad_h
-        safe_max_y = y + h - pad_h
-
-        click_x = random.randint(safe_min_x, max(safe_min_x, safe_max_x))
-        click_y = random.randint(safe_min_y, max(safe_min_y, safe_max_y))
-
-        self.tap(click_x, click_y, radius=2, delay_after=delay_after)
+        click_x = int(x + w / 2)
+        click_y = int(y + h / 2)
+        self.tap(click_x, click_y, radius=0, delay_after=delay_after, action_name=action_name)
 
     def swipe_bezier(
         self,

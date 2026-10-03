@@ -5,6 +5,9 @@ device:
   serial: emulator-5554
   adb_path: 'C:\Program Files\BlueStacks_nxt\HD-Adb.exe'
   screencap_timeout: 5.0
+  debug_mode: false
+  step_by_step: false
+  debug_dir: 'captures/debug_taps'
 
 vision:
   default_threshold: 0.82
