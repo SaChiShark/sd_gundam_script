@@ -92,3 +92,12 @@ data/
 *.db-wal
 *.db-shm
 
+
+# Images
+*.png
+*.jpg
+*.jpeg
+*.bmp
+*.gif
+*.webp
+assets/**/*.png
